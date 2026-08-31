@@ -1,0 +1,947 @@
+/* ===== 全局样式 ===== */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background-color: #0f172a;
+    color: #e2e8f0;
+    min-height: 100vh;
+}
+
+/* ===== 整体布局：左侧菜单 + 主内容区 ===== */
+.app-layout {
+    display: flex;
+    min-height: 100vh;
+}
+
+/* ===== 左侧菜单栏 ===== */
+.sidebar {
+    width: 180px;
+    flex-shrink: 0;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    background: linear-gradient(180deg, #1e293b 0%, #16213a 100%);
+    border-right: 1px solid #334155;
+    display: flex;
+    flex-direction: column;
+    z-index: 50;
+}
+
+.sidebar-title {
+    padding: 20px 16px;
+    font-size: 18px;
+    font-weight: 700;
+    color: #f8fafc;
+    letter-spacing: 2px;
+    border-bottom: 1px solid #334155;
+    text-align: center;
+}
+
+.sidebar-nav {
+    display: flex;
+    flex-direction: column;
+    padding: 12px 10px;
+    gap: 6px;
+}
+
+.menu-item {
+    padding: 12px 16px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: #94a3b8;
+    font-size: 14px;
+    font-weight: 500;
+    text-align: left;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.menu-item:hover {
+    background: rgba(59, 130, 246, 0.1);
+    color: #e2e8f0;
+}
+
+.menu-item.active {
+    background: rgba(59, 130, 246, 0.18);
+    color: #60a5fa;
+    font-weight: 600;
+    box-shadow: inset 3px 0 0 #3b82f6;
+}
+
+/* ===== 嵌入模式（被统一外壳 dailystock iframe 加载时） ===== */
+/* 外壳左侧菜单已承担导航，隐藏自身菜单栏，主内容占满全宽 */
+body.embedded .sidebar {
+    display: none;
+}
+
+body.embedded .app-layout {
+    min-height: 100vh;
+}
+
+/* ===== 主内容区与页面切换 ===== */
+.main-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.page {
+    display: none;
+}
+
+.page.active {
+    display: block;
+}
+
+/* ===== 页面顶部栏 ===== */
+.page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 16px 32px;
+    background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+    border-bottom: 1px solid #334155;
+}
+
+.page-title {
+    font-size: 20px;
+    font-weight: 600;
+    color: #f8fafc;
+    letter-spacing: 1px;
+}
+
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.data-date {
+    font-size: 13px;
+    color: #94a3b8;
+    margin-right: 8px;
+}
+
+/* ===== 日期选择器 ===== */
+.date-picker {
+    padding: 6px 10px;
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    color: #e2e8f0;
+    font-size: 13px;
+    outline: none;
+    cursor: pointer;
+    transition: border-color 0.2s;
+}
+
+.date-picker:hover {
+    border-color: #475569;
+}
+
+.date-picker:focus {
+    border-color: #3b82f6;
+}
+
+/* 日期选择器图标颜色（webkit） */
+.date-picker::-webkit-calendar-picker-indicator {
+    filter: invert(0.7);
+    cursor: pointer;
+}
+
+/* ===== 按钮 ===== */
+.btn {
+    padding: 8px 18px;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-weight: 500;
+}
+
+.btn-primary {
+    background: #3b82f6;
+    color: #fff;
+}
+
+.btn-primary:hover {
+    background: #2563eb;
+}
+
+.btn-primary:disabled {
+    background: #475569;
+    cursor: not-allowed;
+}
+
+.btn-secondary {
+    background: #334155;
+    color: #e2e8f0;
+}
+
+.btn-secondary:hover {
+    background: #475569;
+}
+
+.btn-sm {
+    padding: 4px 12px;
+    font-size: 12px;
+}
+
+/* ===== 统计概览 ===== */
+.summary {
+    display: flex;
+    gap: 32px;
+    padding: 14px 32px;
+    background: #1e293b;
+    border-bottom: 1px solid #334155;
+}
+
+.summary-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.summary-label {
+    font-size: 13px;
+    color: #94a3b8;
+}
+
+.summary-value {
+    font-size: 20px;
+    font-weight: 700;
+}
+
+.summary-unit {
+    font-size: 12px;
+    color: #64748b;
+}
+
+/* ===== 异动标签 ===== */
+.tag-100 {
+    color: #10b981;
+}
+
+.tag-200 {
+    color: #f59e0b;
+}
+
+.tag-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-right: 4px;
+}
+
+.tag-badge-100 {
+    background: rgba(16, 185, 129, 0.15);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.tag-badge-200 {
+    background: rgba(245, 158, 11, 0.15);
+    color: #f59e0b;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+/* ===== 加载状态 ===== */
+.loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 0;
+    gap: 16px;
+}
+
+.loading-spinner {
+    width: 36px;
+    height: 36px;
+    border: 3px solid #334155;
+    border-top-color: #3b82f6;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.loading-text {
+    font-size: 14px;
+    color: #94a3b8;
+}
+
+/* ===== 错误提示 ===== */
+.error {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 32px;
+    gap: 12px;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 8px;
+    margin: 24px 32px;
+    color: #fca5a5;
+}
+
+/* ===== 表格区域 ===== */
+.table-section {
+    padding: 0 32px 24px;
+}
+
+.table-wrapper {
+    overflow-x: auto;
+    border-radius: 8px;
+    border: 1px solid #334155;
+}
+
+.stock-table {
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.stock-table thead {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.stock-table th {
+    background: #1e293b;
+    color: #94a3b8;
+    font-weight: 600;
+    text-align: center;
+    padding: 8px 4px;
+    border-bottom: 2px solid #334155;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    user-select: none;
+    font-size: 12px;
+}
+
+.stock-table th[data-sort] {
+    cursor: pointer;
+}
+
+.stock-table th[data-sort]:hover {
+    color: #e2e8f0;
+}
+
+.stock-table th.sort-asc::after {
+    content: " \25B2";
+    font-size: 10px;
+}
+
+.stock-table th.sort-desc::after {
+    content: " \25BC";
+    font-size: 10px;
+}
+
+.stock-table td {
+    padding: 8px 4px;
+    text-align: center;
+    border-bottom: 1px solid #1e293b;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 12px;
+}
+
+.stock-table tbody tr {
+    transition: background 0.15s;
+}
+
+.stock-table tbody tr:hover {
+    background: rgba(59, 130, 246, 0.08);
+}
+
+.stock-table tbody tr:nth-child(even) {
+    background: rgba(30, 41, 59, 0.4);
+}
+
+.stock-table tbody tr:nth-child(even):hover {
+    background: rgba(59, 130, 246, 0.12);
+}
+
+/* 列宽 (table-layout: fixed, 按比例分配) */
+.col-rank { width: 3%; }
+.col-name { width: 8%; text-align: left !important; }
+.col-code { width: 7%; color: #64748b; }
+.col-date { width: 6%; color: #64748b; }
+.col-change { width: 8%; }
+.col-tag { width: 7%; }
+.col-deviation { width: 13%; font-size: 11px; color: #cbd5e1; }
+.col-triggered { width: 6%; }
+.col-trigger { width: 7.5%; }
+
+/* ===== 板块颜色区分 ===== */
+.board-cy {
+    color: #c084fc !important;  /* 创业板 - 紫色 */
+    font-weight: 500;
+}
+
+.board-kc {
+    color: #38bdf8 !important;  /* 科创板 - 天蓝色 */
+    font-weight: 500;
+}
+
+.board-bz {
+    color: #fb923c !important;  /* 北证 - 橙色 */
+    font-weight: 500;
+}
+
+/* ===== 股票代码超链接 ===== */
+.code-link {
+    color: #60a5fa;
+    text-decoration: none;
+    transition: color 0.2s;
+}
+
+.code-link:hover {
+    color: #93c5fd;
+    text-decoration: underline;
+}
+
+/* ===== 涨跌幅颜色 ===== */
+.change-up {
+    color: #ef4444;
+    font-weight: 600;
+}
+
+.change-down {
+    color: #22c55e;
+    font-weight: 600;
+}
+
+.change-zero {
+    color: #94a3b8;
+}
+
+/* ===== 触发值颜色分级 ===== */
+.trigger-danger {
+    color: #ef4444;
+    font-weight: 700;
+}
+
+.trigger-warning {
+    color: #f59e0b;
+    font-weight: 600;
+}
+
+.trigger-normal {
+    color: #94a3b8;
+}
+
+.trigger-triggered {
+    color: #64748b;
+    font-style: italic;
+}
+
+.trigger-impossible {
+    color: #334155;
+    text-decoration: line-through;
+}
+
+/* ===== 是否触发标签 ===== */
+.tag-triggered-yes {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.tag-triggered-no {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    background: rgba(100, 116, 139, 0.15);
+    color: #64748b;
+    border: 1px solid rgba(100, 116, 139, 0.3);
+}
+
+/* ===== 设置页（内嵌页面，原模态框迁移） ===== */
+/* 多tab面板：默认隐藏，active时显示 */
+.settings-tab-panel {
+    display: none;
+    margin-bottom: 16px;
+}
+
+.settings-tab-panel.active {
+    display: block;
+}
+
+.settings-page {
+    padding: 24px 32px;
+}
+
+.settings-content-static {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    padding: 28px;
+    width: 440px;
+    max-width: 100%;
+}
+
+.settings-content-static input[type="text"] {
+    width: 100%;
+    padding: 8px 12px;
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    color: #e2e8f0;
+    font-size: 14px;
+    outline: none;
+}
+
+.settings-content-static input[type="text"]:focus {
+    border-color: #3b82f6;
+}
+
+.settings-group {
+    margin-bottom: 16px;
+}
+
+.settings-group label {
+    display: block;
+    font-size: 13px;
+    color: #94a3b8;
+    margin-bottom: 6px;
+}
+
+.settings-group input[type="number"] {
+    width: 100%;
+    padding: 8px 12px;
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    color: #e2e8f0;
+    font-size: 14px;
+    outline: none;
+}
+
+.settings-group input[type="number"]:focus {
+    border-color: #3b82f6;
+}
+
+.settings-group input[type="checkbox"] {
+    margin-right: 6px;
+}
+
+.settings-group textarea {
+    width: 100%;
+    padding: 8px 12px;
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    color: #e2e8f0;
+    font-size: 13px;
+    outline: none;
+    resize: vertical;
+    font-family: inherit;
+}
+
+.settings-group textarea:focus {
+    border-color: #3b82f6;
+}
+
+.settings-divider {
+    border: none;
+    border-top: 1px solid #334155;
+    margin: 20px 0 16px;
+}
+
+.settings-subtitle {
+    font-size: 14px;
+    color: #94a3b8;
+    margin-bottom: 12px;
+    font-weight: 600;
+}
+
+.settings-hint {
+    font-size: 12px;
+    color: #64748b;
+}
+
+.settings-hint span {
+    color: #3b82f6;
+    font-weight: 600;
+}
+
+.settings-actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 24px;
+}
+
+.settings-actions .btn {
+    flex: 1;
+}
+
+/* ===== 底部 ===== */
+.footer {
+    text-align: center;
+    padding: 16px;
+    font-size: 12px;
+    color: #475569;
+    border-top: 1px solid #1e293b;
+}
+
+/* ===== 自选页：二级菜单 ===== */
+.sub-tabs {
+    display: flex;
+    gap: 4px;
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 4px;
+}
+
+.sub-tab {
+    padding: 6px 16px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: #94a3b8;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.sub-tab:hover {
+    color: #e2e8f0;
+}
+
+.sub-tab.active {
+    background: #3b82f6;
+    color: #fff;
+    font-weight: 600;
+}
+
+/* ===== 自选页：搜索添加股票 ===== */
+.search-box {
+    position: relative;
+}
+
+.search-input {
+    width: 200px;
+    padding: 7px 12px;
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    color: #e2e8f0;
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+.search-input:focus {
+    border-color: #3b82f6;
+}
+
+.search-input::placeholder {
+    color: #475569;
+}
+
+.search-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    width: 280px;
+    max-height: 320px;
+    overflow-y: auto;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    z-index: 200;
+}
+
+.search-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.search-item:hover {
+    background: rgba(59, 130, 246, 0.12);
+}
+
+.search-item .search-item-name {
+    color: #e2e8f0;
+    font-weight: 500;
+}
+
+.search-item .search-item-code {
+    color: #64748b;
+    font-size: 12px;
+}
+
+.search-item .search-item-added {
+    color: #10b981;
+    font-size: 11px;
+}
+
+/* 已添加过的股票提示态 */
+.search-item.search-item-exists {
+    cursor: default;
+    opacity: 0.55;
+}
+
+.search-item.search-item-exists:hover {
+    background: transparent;
+}
+
+/* 下拉提示文本（加载中/未找到） */
+.search-hint {
+    padding: 12px;
+    text-align: center;
+    color: #64748b;
+    font-size: 12px;
+}
+
+.search-empty {
+    padding: 12px;
+    text-align: center;
+    color: #64748b;
+    font-size: 12px;
+}
+
+/* ===== 自选风险表：操作列 ===== */
+.col-op {
+    width: 6%;
+}
+
+.btn-remove {
+    padding: 3px 10px;
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    border-radius: 4px;
+    background: rgba(239, 68, 68, 0.1);
+    color: #f87171;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-remove:hover {
+    background: rgba(239, 68, 68, 0.25);
+}
+
+/* ===== 自选普通浏览表：宽表 + 前两列固定 ===== */
+.browse-wrapper {
+    overflow-x: auto;
+}
+
+.browse-table {
+    table-layout: auto;
+    min-width: 2900px;
+}
+
+.browse-table th,
+.browse-table td {
+    white-space: nowrap;
+    padding: 8px 10px;
+}
+
+/* 前两列吸顶固定（横向滚动时保持可见） */
+.browse-table th.bt-sticky-code,
+.browse-table td.bt-sticky-code {
+    position: sticky;
+    left: 0;
+    z-index: 5;
+    min-width: 78px;
+}
+
+.browse-table th.bt-sticky-name,
+.browse-table td.bt-sticky-name {
+    position: sticky;
+    left: 78px;
+    z-index: 5;
+    min-width: 88px;
+    text-align: left;
+}
+
+.browse-table th.bt-sticky-code,
+.browse-table th.bt-sticky-name {
+    z-index: 15; /* 表头同时sticky top时更高 */
+}
+
+.browse-table td.bt-sticky-code,
+.browse-table td.bt-sticky-name {
+    background: #111a2e;
+}
+
+.browse-table tbody tr:nth-child(even) td.bt-sticky-code,
+.browse-table tbody tr:nth-child(even) td.bt-sticky-name {
+    background: #16203a;
+}
+
+.browse-table tbody tr:hover td.bt-sticky-code,
+.browse-table tbody tr:hover td.bt-sticky-name {
+    background: #1a2947;
+}
+
+.browse-table td.bt-sticky-code {
+    color: #64748b;
+}
+
+/* 涨停原因/备注列稍宽 */
+.browse-table th.bt-reason,
+.browse-table td.bt-reason {
+    min-width: 150px;
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #cbd5e1;
+    font-size: 11px;
+}
+
+.browse-table th.bt-note,
+.browse-table td.bt-note {
+    min-width: 130px;
+    max-width: 180px;
+}
+
+/* 备注编辑输入框 */
+.note-edit-input {
+    width: 100%;
+    padding: 3px 6px;
+    background: #0f172a;
+    border: 1px solid #3b82f6;
+    border-radius: 4px;
+    color: #e2e8f0;
+    font-size: 11px;
+    outline: none;
+}
+
+.note-cell {
+    cursor: pointer;
+    color: #94a3b8;
+}
+
+.note-cell:hover {
+    color: #60a5fa;
+}
+
+.note-cell.has-note {
+    color: #e2e8f0;
+}
+
+/* 浏览表备注单元格（点击编辑） */
+.browse-table td.wl-note {
+    cursor: pointer;
+    color: #94a3b8;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.browse-table td.wl-note:hover {
+    color: #60a5fa;
+}
+
+/* 主力净额颜色（正=流入红，负=流出绿） */
+.mainnet-up { color: #ef4444; font-weight: 600; }
+.mainnet-down { color: #22c55e; font-weight: 600; }
+.mainnet-zero { color: #94a3b8; }
+
+/* ===== 响应式 ===== */
+@media (max-width: 768px) {
+    .app-layout {
+        flex-direction: column;
+    }
+
+    .sidebar {
+        width: 100%;
+        height: auto;
+        position: static;
+        flex-direction: row;
+        align-items: center;
+        border-right: none;
+        border-bottom: 1px solid #334155;
+    }
+
+    .sidebar-title {
+        padding: 14px 16px;
+        font-size: 15px;
+        border-bottom: none;
+        border-right: 1px solid #334155;
+    }
+
+    .sidebar-nav {
+        flex-direction: row;
+        padding: 8px;
+    }
+
+    .menu-item {
+        padding: 8px 12px;
+        font-size: 13px;
+    }
+
+    .menu-item.active {
+        box-shadow: inset 0 -3px 0 #3b82f6;
+    }
+
+    .page-header {
+        flex-direction: column;
+        align-items: stretch;
+        padding: 12px 16px;
+    }
+
+    .summary {
+        flex-wrap: wrap;
+        gap: 16px;
+        padding: 12px 16px;
+    }
+
+    .table-section {
+        padding: 0 12px 16px;
+    }
+
+    .search-input {
+        width: 100%;
+    }
+
+    .search-box {
+        width: 100%;
+    }
+
+    .stock-table {
+        font-size: 12px;
+    }
+
+    .stock-table th,
+    .stock-table td {
+        padding: 8px 4px;
+    }
+
+    .settings-page {
+        padding: 16px;
+    }
+}

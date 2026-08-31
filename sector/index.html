@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>股票行业板块资金净流向分析</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+    <link rel="stylesheet" href="css/style.css?v=20260801a">
+</head>
+<body>
+    <div class="container">
+        <!-- 头部 -->
+        <header class="header">
+            <h1>股票行业板块资金净流向</h1>
+            <div class="update-time" id="updateTime">数据加载中...</div>
+        </header>
+
+        <!-- 控制面板 -->
+        <div class="control-panel">
+            <div class="control-group">
+                <label>板块类型：</label>
+                <select id="sectorType">
+                    <option value="all" selected>全部板块</option>
+                    <option value="industry">行业板块</option>
+                    <option value="concept">概念板块</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label>时间指标：</label>
+                <select id="indicator">
+                    <option value="今日">今日</option>
+                    <option value="5日">5日</option>
+                    <option value="10日">10日</option>
+                    <option value="一周">一周</option>
+                    <option value="自定义">自定义</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label>图表类型：</label>
+                <select id="chartType">
+                    <option value="bar">柱状图</option>
+                    <option value="intraday" selected>分时图</option>
+                    <option value="heatmap">热力图</option>
+                    <option value="table">表格</option>
+                    <option value="trend">板块走势</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label>显示数量：</label>
+                <select id="topN">
+                    <option value="selected" selected>已选择板块</option>
+                    <option value="15">前15</option>
+                    <option value="20">前20</option>
+                    <option value="30">前30</option>
+                    <option value="0">全部</option>
+                </select>
+            </div>
+            <div class="control-group" id="dateGroup" style="display:none;">
+                <label>日期：</label>
+                <input type="date" id="intradayDate" />
+            </div>
+            <!-- 自定义日期段选择器：时间指标选"自定义"时显示 -->
+            <div class="control-group" id="dateRangeGroup" style="display:none;">
+                <label>起止：</label>
+                <input type="date" id="startDate" />
+                <span style="color:#8b949e">~</span>
+                <input type="date" id="endDate" />
+            </div>
+            <div class="control-group" id="intradayFullGroup" style="display:none;">
+                <button class="btn-intraday-full" id="btnIntradayFull" title="从东方财富API获取当天完整分时数据（240个采样点）">获取完整分时</button>
+            </div>
+            <button class="btn-refresh" id="btnRefresh">刷新数据</button>
+            <!-- 设置齿轮图标：固定到面板右上角顶部，点击弹出设置面板 -->
+            <button class="btn-settings" id="btnSettings" title="设置">⚙️</button>
+        </div>
+
+        <!-- 设置面板（默认隐藏） -->
+        <div class="settings-panel" id="settingsPanel" style="display:none;">
+            <div class="settings-header">
+                <h3>设置</h3>
+                <button class="btn-close-settings" id="btnCloseSettings">关闭</button>
+            </div>
+            <div class="settings-content">
+                <div class="settings-item">
+                    <label for="intradayRefreshInterval">分时图自动刷新间隔：</label>
+                    <select id="intradayRefreshInterval" title="分时图自动刷新间隔（页面可见时生效）">
+                        <option value="0">关闭</option>
+                        <option value="15">15秒</option>
+                        <option value="30" selected>30秒</option>
+                        <option value="60">1分钟</option>
+                        <option value="300">5分钟</option>
+                    </select>
+                    <span class="settings-hint">仅分时图+今日数据生效，页面隐藏时自动暂停</span>
+                </div>
+                <div class="settings-item">
+                    <label for="intradayTrendFilter">分时图趋势筛选：</label>
+                    <select id="intradayTrendFilter">
+                        <option value="all" selected>全部</option>
+                        <option value="rise">上升</option>
+                        <option value="fall">下降</option>
+                    </select>
+                    <input type="number" id="intradayTrendMinutes" value="5" min="1" max="240" title="最近计算时间分钟数" style="width:55px;margin-left:8px;" />
+                    <span style="color:#8b949e;font-size:12px;">分钟</span>
+                    <span class="settings-hint">仅分时图生效：根据最近N分钟首尾点斜率显示上升/下降板块</span>
+                </div>
+                <div class="settings-item">
+                    <label>板块配置：</label>
+                    <button class="btn-config" id="btnConfig">打开板块配置</button>
+                    <span class="settings-hint">配置需要显示/关注的板块列表</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 板块配置面板（默认隐藏） -->
+        <div class="config-panel" id="configPanel" style="display:none;">
+            <div class="config-header">
+                <h3>板块配置</h3>
+                <div class="config-actions">
+                    <button class="btn-select-all" id="btnSelectAll">全选</button>
+                    <button class="btn-deselect-all" id="btnDeselectAll">全不选</button>
+                    <button class="btn-preset" id="btnPreset">恢复预设</button>
+                    <button class="btn-export" id="btnExport">导出</button>
+                    <button class="btn-import" id="btnImport">导入</button>
+                    <button class="btn-sync" id="btnSyncSectors" title="将非预设板块同步到定时任务（生成GitHub Issue）">同步预设</button>
+                    <button class="btn-close-config" id="btnCloseConfig">关闭</button>
+                </div>
+            </div>
+            <div class="config-search">
+                <input type="text" id="sectorSearch" placeholder="搜索板块名称..." />
+                <input type="file" id="importFile" accept=".json" style="display:none" />
+            </div>
+            <div class="config-sectors" id="sectorCheckboxes">
+                <!-- 动态生成 -->
+            </div>
+        </div>
+
+        <!-- 板块走势图选择器（仅走势图模式显示） -->
+        <div class="trend-selector" id="trendSelector" style="display:none;">
+            <div class="trend-selector-header">
+                <label>对比板块（最多5个）：</label>
+                <input type="text" id="trendSectorSearch" placeholder="搜索板块名称添加..." autocomplete="off" />
+            </div>
+            <div class="trend-selected-tags" id="trendSelectedTags"></div>
+            <div class="trend-search-results" id="trendSearchResults" style="display:none;"></div>
+        </div>
+
+        <!-- 图表区域 -->
+        <div class="chart-area">
+            <div id="mainChart" class="chart-container"></div>
+        </div>
+
+        <!-- 汇总信息 -->
+        <div class="summary-panel" id="summaryPanel">
+            <div class="summary-item">
+                <span class="summary-label">净流入板块数</span>
+                <span class="summary-value inflow" id="inflowCount">-</span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-label">净流出板块数</span>
+                <span class="summary-value outflow" id="outflowCount">-</span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-label">最大净流入</span>
+                <span class="summary-value inflow" id="maxInflow">-</span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-label">最大净流出</span>
+                <span class="summary-value outflow" id="maxOutflow">-</span>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/config.js?v=20260801a"></script>
+    <script src="js/trading_calendar.js?v=20260718a"></script>
+    <script src="js/eastmoney_api.js?v=20260702a"></script>
+    <script src="js/charts.js?v=20260817b"></script>
+    <script src="js/app.js?v=20260817b"></script>
+</body>
+</html>

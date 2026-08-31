@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>股票严重异动监控系统</title>
+    <link rel="stylesheet" href="css/style.css?v=9">
+</head>
+<body>
+    <div class="app-layout">
+        <!-- 左侧菜单栏 -->
+        <aside class="sidebar">
+            <div class="sidebar-title">异动监控</div>
+            <nav class="sidebar-nav">
+                <button class="menu-item active" data-tab="market" title="市场行情异动监控">市场行情</button>
+                <button class="menu-item" data-tab="watchlist" title="自选股异动监控与浏览">自选</button>
+                <button class="menu-item" data-tab="settings" title="系统设置">设置</button>
+            </nav>
+        </aside>
+
+        <!-- 主内容区 -->
+        <main class="main-content">
+            <!-- ===== 菜单1：市场行情 ===== -->
+            <section id="page-market" class="page active">
+                <header class="page-header">
+                    <h2 class="page-title">市场行情</h2>
+                    <div class="header-actions">
+                        <span id="dataDate" class="data-date"></span>
+                        <input type="date" id="datePicker" class="date-picker" title="选择日期查看对应交易日数据">
+                        <button id="btnRefresh" class="btn btn-primary" title="刷新数据">刷新</button>
+                    </div>
+                </header>
+
+                <!-- 统计概览 -->
+                <section class="summary">
+                    <div class="summary-item">
+                        <span class="summary-label">100异动风险</span>
+                        <span id="count100" class="summary-value tag-100">0</span>
+                        <span class="summary-unit">只</span>
+                    </div>
+                    <div class="summary-item">
+                        <span class="summary-label">200异动风险</span>
+                        <span id="count200" class="summary-value tag-200">0</span>
+                        <span class="summary-unit">只</span>
+                    </div>
+                    <div class="summary-item">
+                        <span class="summary-label">监控数量</span>
+                        <span id="countTotal" class="summary-value">0</span>
+                        <span class="summary-unit">只</span>
+                    </div>
+                </section>
+
+                <!-- 加载状态 -->
+                <div id="loading" class="loading" style="display:none;">
+                    <div class="loading-spinner"></div>
+                    <span id="loadingText">正在加载数据...</span>
+                </div>
+
+                <!-- 错误提示 -->
+                <div id="error" class="error" style="display:none;">
+                    <span id="errorText"></span>
+                    <button id="btnRetry" class="btn btn-primary btn-sm">重试</button>
+                </div>
+
+                <!-- 数据表格 -->
+                <section id="tableSection" class="table-section">
+                    <div class="table-wrapper">
+                        <table id="stockTable" class="stock-table">
+                            <thead>
+                                <tr>
+                                    <th class="col-rank">#</th>
+                                    <th class="col-name" data-sort="name">名称</th>
+                                    <th class="col-code">代码</th>
+                                    <th class="col-date">日期</th>
+                                    <th class="col-change" data-sort="change">当前幅度</th>
+                                    <th class="col-tag">异动类型</th>
+                                    <th class="col-deviation">偏离值</th>
+                                    <th class="col-triggered">是否触发</th>
+                                    <th class="col-trigger" data-sort="trigger0">6/12</th>
+                                    <th class="col-trigger" data-sort="trigger1">6/15</th>
+                                    <th class="col-trigger" data-sort="trigger2">6/16</th>
+                                    <th class="col-trigger" data-sort="trigger3">6/17</th>
+                                </tr>
+                            </thead>
+                            <tbody id="stockTableBody">
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            </section>
+
+            <!-- ===== 菜单2：自选 ===== -->
+            <section id="page-watchlist" class="page">
+                <header class="page-header">
+                    <h2 class="page-title">自选</h2>
+                    <!-- 二级菜单 -->
+                    <div class="sub-tabs">
+                        <button class="sub-tab active" data-sub="risk">异动风险</button>
+                        <button class="sub-tab" data-sub="browse">普通浏览</button>
+                    </div>
+                    <div class="header-actions">
+                        <!-- 搜索添加股票 -->
+                        <div class="search-box">
+                            <input type="text" id="wlSearchInput" class="search-input" placeholder="搜索名称/代码添加股票" autocomplete="off">
+                            <div id="wlSearchDropdown" class="search-dropdown" style="display:none;"></div>
+                        </div>
+                        <button id="btnWlImport" class="btn btn-secondary" title="导入CSV自选数据">导入CSV</button>
+                        <input type="file" id="wlImportFile" accept=".csv,.txt" style="display:none;">
+                        <button id="btnWlExport" class="btn btn-secondary" title="导出自选列表为CSV">导出CSV</button>
+                        <button id="btnWlRefresh" class="btn btn-primary" title="重新计算自选数据">刷新</button>
+                    </div>
+                </header>
+
+                <!-- 二级视图1：异动风险 -->
+                <div id="wlRiskView">
+                    <section class="summary">
+                        <div class="summary-item">
+                            <span class="summary-label">100异动风险</span>
+                            <span id="wlCount100" class="summary-value tag-100">0</span>
+                            <span class="summary-unit">只</span>
+                        </div>
+                        <div class="summary-item">
+                            <span class="summary-label">200异动风险</span>
+                            <span id="wlCount200" class="summary-value tag-200">0</span>
+                            <span class="summary-unit">只</span>
+                        </div>
+                        <div class="summary-item">
+                            <span class="summary-label">自选数量</span>
+                            <span id="wlCountTotal" class="summary-value">0</span>
+                            <span class="summary-unit">只</span>
+                        </div>
+                    </section>
+
+                    <div id="wlLoading" class="loading" style="display:none;">
+                        <div class="loading-spinner"></div>
+                        <span id="wlLoadingText">正在加载数据...</span>
+                    </div>
+
+                    <div id="wlError" class="error" style="display:none;">
+                        <span id="wlErrorText"></span>
+                        <button id="btnWlRetry" class="btn btn-primary btn-sm">重试</button>
+                    </div>
+
+                    <section id="wlTableSection" class="table-section">
+                        <div class="table-wrapper">
+                            <table id="wlStockTable" class="stock-table">
+                                <thead>
+                                    <tr>
+                                        <th class="col-rank">#</th>
+                                        <th class="col-name" data-sort="name">名称</th>
+                                        <th class="col-code">代码</th>
+                                        <th class="col-date">日期</th>
+                                        <th class="col-change" data-sort="change">当前幅度</th>
+                                        <th class="col-tag">异动类型</th>
+                                        <th class="col-deviation">偏离值</th>
+                                        <th class="col-triggered">是否触发</th>
+                                        <th class="col-trigger" data-sort="trigger0">T+0</th>
+                                        <th class="col-trigger" data-sort="trigger1">T+1</th>
+                                        <th class="col-trigger" data-sort="trigger2">T+2</th>
+                                        <th class="col-trigger" data-sort="trigger3">T+3</th>
+                                        <th class="col-op">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="wlTableBody">
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
+                </div>
+
+                <!-- 二级视图2：普通浏览 -->
+                <div id="wlBrowseView" style="display:none;">
+                    <div id="wlBrowseLoading" class="loading" style="display:none;">
+                        <div class="loading-spinner"></div>
+                        <span id="wlBrowseLoadingText">正在加载数据...</span>
+                    </div>
+
+                    <div id="wlBrowseError" class="error" style="display:none;">
+                        <span id="wlBrowseErrorText"></span>
+                    </div>
+
+                    <section id="wlBrowseTableSection" class="table-section">
+                        <div class="table-wrapper browse-wrapper">
+                            <table id="wlBrowseTable" class="stock-table browse-table">
+                                <thead>
+                                    <tr>
+                                        <th class="bt-sticky-code" data-sort="code">代码</th>
+                                        <th class="bt-sticky-name" data-sort="name">名称</th>
+                                        <th data-sort="floatMV">流通市值</th>
+                                        <th data-sort="totalMV">总市值</th>
+                                        <th data-sort="changePercent">涨幅</th>
+                                        <th data-sort="auctionGain">竞价涨幅</th>
+                                        <th data-sort="turnover">换手率</th>
+                                        <th data-sort="volumeRatio">量比</th>
+                                        <th data-sort="mainNet">主力净额</th>
+                                        <th data-sort="amount">成交额</th>
+                                        <th data-sort="upDays">连涨天数</th>
+                                        <th data-sort="zt10">10日涨停</th>
+                                        <th data-sort="zt30">30日涨停</th>
+                                        <th data-sort="ztTime">涨停时间</th>
+                                        <th class="bt-reason" data-sort="ztReason">涨停原因</th>
+                                        <th data-sort="prevDay">前日</th>
+                                        <th data-sort="yesterday">昨日</th>
+                                        <th data-sort="d2">近2日</th>
+                                        <th data-sort="d3">近3日</th>
+                                        <th data-sort="d5">近5日</th>
+                                        <th data-sort="d10">近10日</th>
+                                        <th data-sort="d20">近20日</th>
+                                        <th data-sort="d25">近25日</th>
+                                        <th data-sort="d30">近30日</th>
+                                        <th data-sort="ytd">今年来</th>
+                                        <th class="bt-note" data-sort="note">备注</th>
+                                        <th class="bt-op">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="wlBrowseTableBody">
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
+                </div>
+            </section>
+
+            <!-- ===== 菜单3：设置（多tab：监控参数/数据缓存/网络代理） ===== -->
+            <section id="page-settings" class="page">
+                <header class="page-header">
+                    <h2 class="page-title">设置</h2>
+                    <!-- 设置二级tab -->
+                    <div class="sub-tabs">
+                        <button class="sub-tab active" data-settings-tab="monitor" title="异动监控相关参数">监控参数</button>
+                        <button class="sub-tab" data-settings-tab="cache" title="本地K线缓存管理">数据缓存</button>
+                        <button class="sub-tab" data-settings-tab="proxy" title="API代理与请求网络配置">网络代理</button>
+                    </div>
+                </header>
+                <div class="settings-page">
+                    <!-- tab1：监控参数 -->
+                    <div class="settings-content-static settings-tab-panel active" data-settings-panel="monitor">
+                        <div class="settings-group">
+                            <label for="settingTopN">监控数量（TOP N）</label>
+                            <input type="number" id="settingTopN" min="10" max="500" value="100">
+                        </div>
+                        <div class="settings-group">
+                            <label for="settingForwardDays">提前天数</label>
+                            <input type="number" id="settingForwardDays" min="1" max="10" value="5">
+                        </div>
+                        <div class="settings-group">
+                            <label for="settingAutoRefresh">自动刷新（秒，0=关闭）</label>
+                            <input type="number" id="settingAutoRefresh" min="0" max="600" value="0">
+                        </div>
+                        <div class="settings-group">
+                            <label for="settingRequestInterval">请求间隔（毫秒，建议300-1000）</label>
+                            <input type="number" id="settingRequestInterval" min="0" max="5000" value="500">
+                        </div>
+                        <div class="settings-group">
+                            <label>
+                                <input type="checkbox" id="settingOnlyRisk" checked>
+                                仅显示有异动风险的股票（市场行情）
+                            </label>
+                        </div>
+                    </div>
+                    <!-- tab2：数据缓存 -->
+                    <div class="settings-content-static settings-tab-panel" data-settings-panel="cache">
+                        <div class="settings-group">
+                            <label for="settingCacheCapacity">K线缓存容量（只股票，超出按LRU淘汰最久未访问）</label>
+                            <input type="number" id="settingCacheCapacity" min="50" max="2000" value="500">
+                        </div>
+                        <div class="settings-group">
+                            <label for="settingCacheDays">市场股票缓存保留交易日数（未出现在市场行情即淘汰，自选股除外）</label>
+                            <input type="number" id="settingCacheDays" min="1" max="30" value="5">
+                        </div>
+                        <div class="settings-group">
+                            <span id="cacheStats" class="settings-hint">当前K线缓存：0 只，占用约 0 KB</span>
+                            <button id="btnClearKlineCache" class="btn btn-secondary btn-sm" style="margin-left:8px;">清理缓存</button>
+                        </div>
+                    </div>
+                    <!-- tab3：网络代理 -->
+                    <div class="settings-content-static settings-tab-panel" data-settings-panel="proxy">
+                        <div class="settings-group">
+                            <label for="settingProxyUrl">主代理地址</label>
+                            <input type="text" id="settingProxyUrl" placeholder="https://your-proxy.vercel.app">
+                        </div>
+                        <div class="settings-group">
+                            <label for="settingBackupProxy">备用代理（每行一个）</label>
+                            <textarea id="settingBackupProxy" rows="2" placeholder="https://backup-proxy.example.com"></textarea>
+                        </div>
+                        <div class="settings-group">
+                            <label for="settingProxyToken">代理令牌（可选）</label>
+                            <input type="text" id="settingProxyToken" placeholder="留空则不发送">
+                        </div>
+                        <div class="settings-group">
+                            <span class="settings-hint">当前模式：<span id="currentMode">--</span></span>
+                            <button id="btnTestProxy" class="btn btn-secondary btn-sm" style="margin-left:8px;">测试代理</button>
+                        </div>
+                        <div class="settings-group" id="proxyTestResult" style="display:none;">
+                            <span class="settings-hint" id="proxyTestText"></span>
+                        </div>
+                    </div>
+                    <!-- 保存按钮：各tab共享 -->
+                    <div class="settings-actions">
+                        <button id="btnSaveSettings" class="btn btn-primary">保存设置</button>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- 底部信息 -->
+    <footer class="footer">
+        <span>数据来源：东方财富 / 腾讯 | 异动规则：10天100% / 30天200%（严重异常波动，适用全A股）</span>
+    </footer>
+
+    <script src="js/api.js?v=20"></script>
+    <script src="js/calculator.js?v=19"></script>
+    <script src="js/tradingCalendar.js?v=11"></script>
+    <script src="js/renderer.js?v=19"></script>
+    <script src="js/watchlist.js?v=3"></script>
+    <script src="js/main.js?v=20"></script>
+</body>
+</html>

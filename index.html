@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <title>每日股票交易系统</title>
+    <link rel="stylesheet" href="css/shell.css?v=1">
+</head>
+<body>
+    <div class="shell-layout">
+        <!-- 左侧菜单栏 -->
+        <aside class="shell-sidebar">
+            <div class="shell-title">DailyStock</div>
+            <nav class="shell-nav">
+                <button class="shell-menu-item active" data-menu="sector" data-src="sector/index.html" title="板块资金流向分析">板块资金</button>
+                <button class="shell-menu-item" data-menu="market" data-src="stock/index.html?page=market&embedded=1" title="市场行情异动监控">异动监控</button>
+                <button class="shell-menu-item" data-menu="watchlist" data-src="stock/index.html?page=watchlist&embedded=1" title="自选股监控与管理">自选</button>
+                <button class="shell-menu-item" data-menu="settings" data-src="stock/index.html?page=settings&embedded=1" title="系统设置">设置</button>
+            </nav>
+        </aside>
+
+        <!-- 主内容区：iframe 加载子应用 -->
+        <main class="shell-main">
+            <iframe id="appFrame" class="app-frame" src="sector/index.html" title="功能页面"></iframe>
+        </main>
+    </div>
+
+    <script src="js/shell.js?v=1"></script>
+</body>
+</html>

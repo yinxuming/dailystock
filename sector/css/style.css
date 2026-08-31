@@ -1,0 +1,610 @@
+/* 全局样式 */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: "Microsoft YaHei", "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+    background-color: #0d1117;
+    color: #e6edf3;
+    min-height: 100vh;
+}
+
+.container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+/* 头部 */
+.header {
+    text-align: center;
+    padding: 20px 0;
+    border-bottom: 1px solid #30363d;
+    margin-bottom: 20px;
+}
+
+.header h1 {
+    font-size: 28px;
+    color: #f0f6fc;
+    margin-bottom: 8px;
+}
+
+.update-time {
+    font-size: 14px;
+    color: #8b949e;
+}
+
+/* 控制面板 */
+.control-panel {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: center;
+    padding: 16px 56px 16px 20px;
+    background: #161b22;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    border: 1px solid #30363d;
+    position: relative;
+}
+
+.control-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.control-group label {
+    font-size: 14px;
+    color: #8b949e;
+    white-space: nowrap;
+}
+
+.control-group select {
+    padding: 6px 12px;
+    border-radius: 4px;
+    border: 1px solid #30363d;
+    background: #0d1117;
+    color: #e6edf3;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.control-group select:focus {
+    outline: none;
+    border-color: #58a6ff;
+}
+
+.control-group input[type="date"] {
+    padding: 6px 12px;
+    border-radius: 4px;
+    border: 1px solid #30363d;
+    background: #0d1117;
+    color: #e6edf3;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.control-group input[type="date"]:focus {
+    outline: none;
+    border-color: #58a6ff;
+}
+
+.btn-refresh {
+    padding: 8px 20px;
+    border: none;
+    border-radius: 4px;
+    background: #238636;
+    color: #fff;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.btn-refresh:hover {
+    background: #2ea043;
+}
+
+.btn-refresh:active {
+    background: #238636;
+}
+
+.btn-intraday-full {
+    padding: 8px 16px;
+    border: 1px solid #58a6ff;
+    border-radius: 4px;
+    background: transparent;
+    color: #58a6ff;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+
+.btn-intraday-full:hover {
+    background: rgba(88, 166, 255, 0.15);
+}
+
+.btn-intraday-full:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn-intraday-full.success {
+    border-color: #3fb950;
+    color: #3fb950;
+}
+
+.btn-config {
+    padding: 8px 20px;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    background: #161b22;
+    color: #e6edf3;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.btn-config:hover {
+    background: #21262d;
+    border-color: #58a6ff;
+}
+
+/* 设置齿轮按钮：固定到控制面板右上角顶部 */
+.btn-settings {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    background: #161b22;
+    color: #8b949e;
+    font-size: 18px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    z-index: 10;
+}
+
+.btn-settings:hover {
+    background: #21262d;
+    border-color: #58a6ff;
+    color: #e6edf3;
+}
+
+/* 设置面板 */
+.settings-panel {
+    background: #161b22;
+    border-radius: 8px;
+    border: 1px solid #30363d;
+    padding: 16px 20px;
+    margin-bottom: 20px;
+}
+
+.settings-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.settings-header h3 {
+    font-size: 16px;
+    color: #e6edf3;
+    margin: 0;
+}
+
+.settings-content {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+}
+
+.settings-item {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.settings-item label {
+    font-size: 14px;
+    color: #8b949e;
+}
+
+.settings-item select {
+    padding: 6px 12px;
+    border-radius: 4px;
+    border: 1px solid #30363d;
+    background: #0d1117;
+    color: #e6edf3;
+    font-size: 14px;
+    cursor: pointer;
+    width: 160px;
+}
+
+.settings-item select:focus {
+    outline: none;
+    border-color: #58a6ff;
+}
+
+.settings-item .btn-config {
+    padding: 6px 12px;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    background: #0d1117;
+    color: #e6edf3;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+    width: 160px;
+    text-align: center;
+}
+
+.settings-item .btn-config:hover {
+    background: #21262d;
+    border-color: #58a6ff;
+}
+
+.settings-hint {
+    font-size: 12px;
+    color: #6e7681;
+}
+
+.btn-close-settings {
+    padding: 4px 12px;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    background: #0d1117;
+    color: #f85149;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-close-settings:hover {
+    border-color: #f85149;
+}
+
+/* 板块配置面板 */
+.config-panel {
+    background: #161b22;
+    border-radius: 8px;
+    border: 1px solid #30363d;
+    padding: 16px 20px;
+    margin-bottom: 20px;
+}
+
+.config-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.config-header h3 {
+    font-size: 16px;
+    color: #e6edf3;
+    margin: 0;
+}
+
+.config-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.config-actions button {
+    padding: 4px 12px;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    background: #0d1117;
+    color: #8b949e;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.config-actions button:hover {
+    color: #e6edf3;
+    border-color: #58a6ff;
+}
+
+.btn-close-config {
+    color: #f85149 !important;
+}
+
+.btn-sync {
+    color: #58a6ff !important;
+    border-color: #58a6ff !important;
+}
+
+.config-search input {
+    width: 100%;
+    padding: 8px 12px;
+    border-radius: 4px;
+    border: 1px solid #30363d;
+    background: #0d1117;
+    color: #e6edf3;
+    font-size: 14px;
+    margin-bottom: 12px;
+}
+
+.config-search input:focus {
+    outline: none;
+    border-color: #58a6ff;
+}
+
+.config-sectors {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+    padding: 4px;
+}
+
+.config-sectors label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    font-size: 13px;
+    color: #e6edf3;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.config-sectors label:hover {
+    border-color: #58a6ff;
+}
+
+.config-sectors label.selected {
+    background: #1f3a5f;
+    border-color: #58a6ff;
+}
+
+.config-sectors input[type="checkbox"] {
+    accent-color: #58a6ff;
+}
+
+/* 板块走势图选择器 */
+.trend-selector {
+    background: #161b22;
+    border-radius: 8px;
+    border: 1px solid #30363d;
+    padding: 12px 20px;
+    margin-bottom: 20px;
+}
+
+.trend-selector-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
+.trend-selector-header label {
+    font-size: 14px;
+    color: #8b949e;
+    white-space: nowrap;
+}
+
+.trend-selector-header input {
+    flex: 1;
+    padding: 6px 12px;
+    border-radius: 4px;
+    border: 1px solid #30363d;
+    background: #0d1117;
+    color: #e6edf3;
+    font-size: 14px;
+}
+
+.trend-selector-header input:focus {
+    outline: none;
+    border-color: #58a6ff;
+}
+
+.trend-selected-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-height: 32px;
+}
+
+.trend-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    background: #1f3a5f;
+    border: 1px solid #58a6ff;
+    color: #e6edf3;
+    font-size: 13px;
+}
+
+.trend-tag .tag-color {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.trend-tag .tag-remove {
+    cursor: pointer;
+    color: #f85149;
+    font-weight: bold;
+    margin-left: 4px;
+}
+
+.trend-tag .tag-remove:hover {
+    color: #ff6b6b;
+}
+
+.trend-search-results {
+    margin-top: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    background: #0d1117;
+}
+
+.trend-search-item {
+    padding: 8px 12px;
+    color: #e6edf3;
+    font-size: 13px;
+    cursor: pointer;
+    border-bottom: 1px solid #21262d;
+}
+
+.trend-search-item:hover {
+    background: #1f3a5f;
+}
+
+.trend-search-item:last-child {
+    border-bottom: none;
+}
+
+.trend-empty-hint {
+    color: #6e7681;
+    font-size: 12px;
+    padding: 4px 0;
+}
+
+/* 图表区域 */
+.chart-area {
+    background: #161b22;
+    border-radius: 8px;
+    border: 1px solid #30363d;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.chart-container {
+    width: 100%;
+    min-height: 400px;
+    overflow-y: auto;
+}
+
+/* 汇总面板 */
+.summary-panel {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    padding: 16px 20px;
+    background: #161b22;
+    border-radius: 8px;
+    border: 1px solid #30363d;
+}
+
+.summary-item {
+    flex: 1;
+    min-width: 150px;
+    text-align: center;
+    padding: 12px;
+}
+
+.summary-label {
+    display: block;
+    font-size: 13px;
+    color: #8b949e;
+    margin-bottom: 6px;
+}
+
+.summary-value {
+    display: block;
+    font-size: 22px;
+    font-weight: bold;
+}
+
+.summary-value.inflow {
+    color: #f85149;
+}
+
+.summary-value.outflow {
+    color: #3fb950;
+}
+
+/* 响应式 */
+@media (max-width: 768px) {
+    .container {
+        padding: 10px;
+    }
+
+    .header h1 {
+        font-size: 20px;
+    }
+
+    .control-panel {
+        gap: 10px;
+    }
+
+    .chart-container {
+        min-height: 300px;
+    }
+}
+
+/* 板块数据表格 */
+.sector-table-title {
+    text-align: center;
+    font-size: 18px;
+    color: #e6edf3;
+    margin-bottom: 16px;
+}
+
+.sector-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+}
+
+.sector-table thead {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.sector-table th {
+    background: #21262d;
+    color: #e6edf3;
+    padding: 10px 16px;
+    text-align: left;
+    border-bottom: 2px solid #30363d;
+    white-space: nowrap;
+    user-select: none;
+}
+
+.sector-table th.sortable {
+    cursor: pointer;
+}
+
+.sector-table th.sortable:hover {
+    background: #30363d;
+}
+
+.sector-table td {
+    padding: 8px 16px;
+    border-bottom: 1px solid #21262d;
+    white-space: nowrap;
+}
+
+.sector-table tbody tr:hover {
+    background: #1c2128;
+}
+
+.sector-table .sector-name {
+    color: #e6edf3;
+    font-weight: 500;
+}
