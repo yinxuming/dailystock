@@ -1,11 +1,10 @@
 # 公开仓库 dailystock 的 .github/workflows/deploy.yml
 name: Deploy to GitHub Pages
 
+# 仅显式触发（fundhome 模式）：
+# 所有部署由来源方（私有仓库 deploy-public.yml / update-data.yml）末尾 curl dispatch 显式触发，
+# 不依赖 push paths，以后新增任何数据/代码路径都无需修改本文件
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'sector/data/**'
   workflow_dispatch:
 
 permissions:
