@@ -2,14 +2,14 @@
  * 统一外壳脚本
  *
  * 职责：
- * 1. 左侧菜单切换：板块资金（sector应用）/ 异动监控、自选、设置（stock应用）
+ * 1. 左侧菜单切换：板块资金（sector应用）/ 异动监控、每日复盘、自选、设置（stock应用）
  * 2. iframe 加载子应用，CSS/JS 完全隔离，子应用零侵入
- * 3. 同一应用内切换（stock三个页面）通过 postMessage 通知子应用切tab，避免整页刷新丢失状态
+ * 3. 同一应用内切换（stock四个页面）通过 postMessage 通知子应用切tab，避免整页刷新丢失状态
  * 4. 菜单选中状态持久化（localStorage），下次进入恢复
  * 5. 菜单栏展开/收起：收起后仅显示图标，状态持久化，下次进入恢复
  *
  * 与子应用的通信协议（同源 iframe）：
- * - shell → 子应用: postMessage({type:'dailystock:navigate', page:'market'|'watchlist'|'settings'})
+ * - shell → 子应用: postMessage({type:'dailystock:navigate', page:'market'|'fupan'|'watchlist'|'settings'})
  * - 子应用无需回传消息，切换失败时由 data-src 兜底刷新
  *
  * localStorage 持久化key：
@@ -109,8 +109,8 @@ const Shell = (function () {
         activeMenu = menu;
         localStorage.setItem(ACTIVE_MENU_KEY, menu);
 
-        // 判断目标应用：market/watchlist/settings 属于 stock 应用
-        const isStockApp = ['market', 'watchlist', 'settings'].includes(menu);
+        // 判断目标应用：market/fupan/watchlist/settings 属于 stock 应用
+        const isStockApp = ['market', 'fupan', 'watchlist', 'settings'].includes(menu);
         const currentIsStock = frame.src.includes('stock/index.html');
 
         if (isStockApp && currentIsStock && frameReady) {

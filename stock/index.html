@@ -7,7 +7,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>股票严重异动监控系统</title>
-    <link rel="stylesheet" href="css/style.css?v=9">
+    <link rel="stylesheet" href="css/style.css?v=10">
 </head>
 <body>
     <div class="app-layout">
@@ -16,6 +16,7 @@
             <div class="sidebar-title">异动监控</div>
             <nav class="sidebar-nav">
                 <button class="menu-item active" data-tab="market" title="市场行情异动监控">市场行情</button>
+                <button class="menu-item" data-tab="fupan" title="每日复盘：大盘/板块轮动/涨跌停/评分预测">每日复盘</button>
                 <button class="menu-item" data-tab="watchlist" title="自选股异动监控与浏览">自选</button>
                 <button class="menu-item" data-tab="settings" title="系统设置">设置</button>
             </nav>
@@ -92,7 +93,46 @@
                 </section>
             </section>
 
-            <!-- ===== 菜单2：自选 ===== -->
+            <!-- ===== 菜单2：每日复盘（四子tab：大盘/板块轮动/涨跌停/评分预测） ===== -->
+            <section id="page-fupan" class="page">
+                <header class="page-header">
+                    <h2 class="page-title">每日复盘</h2>
+                    <!-- 复盘二级tab -->
+                    <div class="sub-tabs">
+                        <button class="sub-tab active" data-fp-sub="market" title="指数表现/市场概况/成交与情绪趋势">大盘</button>
+                        <button class="sub-tab" data-fp-sub="sectors" title="当日板块涨跌榜/近10日行业轮动矩阵">板块轮动</button>
+                        <button class="sub-tab" data-fp-sub="zt" title="涨停/跌停/炸板池/连板梯队/晋级率/情绪">涨跌停</button>
+                        <button class="sub-tab" data-fp-sub="score" title="Top5标的/8维评分/晋级概率">评分预测</button>
+                    </div>
+                    <div class="header-actions">
+                        <span id="fpMeta" class="data-date"></span>
+                        <select id="fpDatePicker" class="date-picker" title="选择交易日"></select>
+                        <button id="btnFpRefresh" class="btn btn-primary" title="强制刷新当前交易日数据">刷新</button>
+                    </div>
+                </header>
+
+                <!-- 加载状态 -->
+                <div id="fpLoading" class="loading" style="display:none;">
+                    <div class="loading-spinner"></div>
+                    <span id="fpLoadingText">正在加载复盘数据...</span>
+                </div>
+
+                <!-- 错误提示 -->
+                <div id="fpError" class="error" style="display:none;">
+                    <span id="fpErrorText"></span>
+                    <button id="btnFpRetry" class="btn btn-primary btn-sm">重试</button>
+                </div>
+
+                <!-- 四个子tab面板（由Fupan模块控制显隐并渲染） -->
+                <div class="fp-content">
+                    <div data-fp-sub-panel="market"></div>
+                    <div data-fp-sub-panel="sectors" style="display:none"></div>
+                    <div data-fp-sub-panel="zt" style="display:none"></div>
+                    <div data-fp-sub-panel="score" style="display:none"></div>
+                </div>
+            </section>
+
+            <!-- ===== 菜单3：自选 ===== -->
             <section id="page-watchlist" class="page">
                 <header class="page-header">
                     <h2 class="page-title">自选</h2>
@@ -224,7 +264,7 @@
                 </div>
             </section>
 
-            <!-- ===== 菜单3：设置（多tab：监控参数/数据缓存/网络代理） ===== -->
+            <!-- ===== 菜单4：设置（多tab：监控参数/数据缓存/网络代理） ===== -->
             <section id="page-settings" class="page">
                 <header class="page-header">
                     <h2 class="page-title">设置</h2>
@@ -312,11 +352,16 @@
         <span>数据来源：东方财富 / 腾讯 | 异动规则：10天100% / 30天200%（严重异常波动，适用全A股）</span>
     </footer>
 
-    <script src="js/api.js?v=20"></script>
+    <script src="js/api.js?v=21"></script>
     <script src="js/calculator.js?v=19"></script>
     <script src="js/tradingCalendar.js?v=11"></script>
     <script src="js/renderer.js?v=19"></script>
     <script src="js/watchlist.js?v=3"></script>
-    <script src="js/main.js?v=20"></script>
+    <script src="js/fupan_data.js?v=1"></script>
+    <script src="js/fupan_scoring.js?v=1"></script>
+    <script src="js/fupan_charts.js?v=1"></script>
+    <script src="js/fupan_render.js?v=3"></script>
+    <script src="js/fupan.js?v=2"></script>
+    <script src="js/main.js?v=21"></script>
 </body>
 </html>

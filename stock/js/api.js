@@ -1261,6 +1261,10 @@ const StockAPI = (function () {
         getZTPool,
         getTHSZTReason,
         getAllStockList,
+        // ===== 通用工具（复盘等模块复用） =====
+        getDailyCache,
+        setDailyCache,
+        todayStr,
         // ===== 内部纯函数（仅供Node测试使用，业务代码勿调用） =====
         _internals: {
             mergeKlinesByDate,

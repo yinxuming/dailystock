@@ -8,8 +8,9 @@
  * 3. 有缓存时：直接渲染缓存结果
  * 4. 点击刷新：清空缓存，强制重新获取
  *
- * 页面结构（左侧菜单栏三页）：
+ * 页面结构（左侧菜单栏四页）：
  * - market：市场行情（原有异动监控）
+ * - fupan：每日复盘（Fupan模块，四子tab：大盘/板块轮动/涨跌停/评分预测）
  * - watchlist：自选（Watchlist模块，二级菜单+CSV导入导出+搜索）
  * - settings：设置（原顶部设置弹窗迁入）
  * - tab切换状态持久化：进入首页时恢复最后一次选中的tab
@@ -306,8 +307,8 @@ const App = (function () {
 
     /**
      * 切换左侧菜单tab
-     * 主流程：更新菜单按钮态 → 切换页面显隐 → 持久化tab状态
-     * @param {string} tab - market|watchlist|settings
+     * 主流程：更新菜单按钮态 → 切换页面显隐 → 通知懒加载模块 → 持久化tab状态
+     * @param {string} tab - market|fupan|watchlist|settings
      */
     function switchTab(tab) {
         // 更新菜单按钮激活态
@@ -321,6 +322,10 @@ const App = (function () {
         // 自选tab激活时通知自选模块（首次进入懒加载数据）
         if (tab === 'watchlist' && typeof Watchlist !== 'undefined') {
             Watchlist.onTabActivated();
+        }
+        // 复盘tab激活时通知复盘模块（首次进入懒加载数据）
+        if (tab === 'fupan' && typeof Fupan !== 'undefined') {
+            Fupan.onTabActivated();
         }
         // 记住最后一次选中的tab
         try {
@@ -336,16 +341,17 @@ const App = (function () {
      * URL参数page用于统一外壳（dailystock）iframe 定位到指定tab
      */
     function initTabs() {
-        // 统一外壳通过URL参数page指定初始tab（market|watchlist|settings）
+        // 统一外壳通过URL参数page指定初始tab（market|fupan|watchlist|settings）
+        const validTabs = ['market', 'fupan', 'watchlist', 'settings'];
         const urlPage = new URLSearchParams(window.location.search).get('page');
         let saved = 'market';
-        if (urlPage && ['market', 'watchlist', 'settings'].includes(urlPage)) {
+        if (urlPage && validTabs.includes(urlPage)) {
             saved = urlPage;
         } else {
             try {
                 saved = localStorage.getItem(ACTIVE_TAB_KEY) || 'market';
             } catch (e) { /* 忽略 */ }
-            if (!['market', 'watchlist', 'settings'].includes(saved)) saved = 'market';
+            if (!validTabs.includes(saved)) saved = 'market';
         }
         switchTab(saved);
 
@@ -389,11 +395,11 @@ const App = (function () {
             document.body.classList.add('embedded');
         }
 
-        // 接收统一外壳的导航消息：{type:'dailystock:navigate', page:'market'|'watchlist'|'settings'}
+        // 接收统一外壳的导航消息：{type:'dailystock:navigate', page:'market'|'fupan'|'watchlist'|'settings'}
         window.addEventListener('message', (event) => {
             const data = event.data;
             if (data && data.type === 'dailystock:navigate' &&
-                ['market', 'watchlist', 'settings'].includes(data.page)) {
+                ['market', 'fupan', 'watchlist', 'settings'].includes(data.page)) {
                 switchTab(data.page);
             }
         });
