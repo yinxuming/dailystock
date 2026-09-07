@@ -16,7 +16,7 @@ const Fupan = (function () {
     const SUB_TABS = {
         market: { title: '大盘', render: (el, day, date) => FupanRenderer.renderMarket(el, day, date) },
         sectors: { title: '板块轮动', render: (el, day, date) => FupanRenderer.renderSectors(el, day, date, getDate) },
-        zt: { title: '涨跌停', render: (el, day) => FupanRenderer.renderZT(el, day) },
+        zt: { title: '涨跌停', render: (el, day, date) => FupanRenderer.renderZT(el, day, date) },
         score: { title: '评分预测', render: (el, day, date) => FupanRenderer.renderScore(el, day, date) }
     };
 

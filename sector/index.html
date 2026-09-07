@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>股票行业板块资金净流向分析</title>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
-    <link rel="stylesheet" href="css/style.css?v=20260801a">
+    <link rel="stylesheet" href="css/style.css?v=20260907a">
 </head>
 <body>
     <div class="container">
@@ -15,6 +15,14 @@
             <div class="update-time" id="updateTime">数据加载中...</div>
         </header>
 
+        <!-- 二级tab：板块资金 / 关注板块管理（TODO5.3，状态持久化 sector_active_subtab） -->
+        <div class="subtab-bar" id="subtabBar">
+            <button class="subtab-btn active" data-subtab="fund" title="板块资金流向图表与汇总">板块资金</button>
+            <button class="subtab-btn" data-subtab="watch" title="勾选的板块即为关注板块（每日复盘板块轮动可筛选）">关注板块管理</button>
+        </div>
+
+        <!-- 二级tab：板块资金（控制面板+设置+图表+汇总） -->
+        <div id="subtabFund" class="subtab-panel">
         <!-- 控制面板 -->
         <div class="control-panel">
             <div class="control-group">
@@ -111,29 +119,6 @@
             </div>
         </div>
 
-        <!-- 板块配置面板（默认隐藏） -->
-        <div class="config-panel" id="configPanel" style="display:none;">
-            <div class="config-header">
-                <h3>板块配置</h3>
-                <div class="config-actions">
-                    <button class="btn-select-all" id="btnSelectAll">全选</button>
-                    <button class="btn-deselect-all" id="btnDeselectAll">全不选</button>
-                    <button class="btn-preset" id="btnPreset">恢复预设</button>
-                    <button class="btn-export" id="btnExport">导出</button>
-                    <button class="btn-import" id="btnImport">导入</button>
-                    <button class="btn-sync" id="btnSyncSectors" title="将非预设板块同步到定时任务（生成GitHub Issue）">同步预设</button>
-                    <button class="btn-close-config" id="btnCloseConfig">关闭</button>
-                </div>
-            </div>
-            <div class="config-search">
-                <input type="text" id="sectorSearch" placeholder="搜索板块名称..." />
-                <input type="file" id="importFile" accept=".json" style="display:none" />
-            </div>
-            <div class="config-sectors" id="sectorCheckboxes">
-                <!-- 动态生成 -->
-            </div>
-        </div>
-
         <!-- 板块走势图选择器（仅走势图模式显示） -->
         <div class="trend-selector" id="trendSelector" style="display:none;">
             <div class="trend-selector-header">
@@ -168,12 +153,39 @@
                 <span class="summary-value outflow" id="maxOutflow">-</span>
             </div>
         </div>
+        </div><!-- /subtabFund -->
+
+        <!-- 二级tab：关注板块管理（勾选即关注板块，实时写入localStorage并与每日复盘共享） -->
+        <div id="subtabWatch" class="subtab-panel" style="display:none;">
+            <p class="watch-hint">勾选的板块即为「关注板块」，实时保存；每日复盘 → 板块轮动 可勾选"仅显示关注板块"进行筛选。预设变更通过「同步预设」生成 Issue 提交到独立部署项目仓库审批。</p>
+            <div class="config-panel" id="configPanel">
+                <div class="config-header">
+                    <h3>板块配置</h3>
+                    <div class="config-actions">
+                        <button class="btn-select-all" id="btnSelectAll">全选</button>
+                        <button class="btn-deselect-all" id="btnDeselectAll">全不选</button>
+                        <button class="btn-preset" id="btnPreset">恢复预设</button>
+                        <button class="btn-export" id="btnExport">导出</button>
+                        <button class="btn-import" id="btnImport">导入</button>
+                        <button class="btn-sync" id="btnSyncSectors" title="将非预设板块同步到定时任务（生成GitHub Issue）">同步预设</button>
+                        <button class="btn-close-config" id="btnCloseConfig">返回板块资金</button>
+                    </div>
+                </div>
+                <div class="config-search">
+                    <input type="text" id="sectorSearch" placeholder="搜索板块名称..." />
+                    <input type="file" id="importFile" accept=".json" style="display:none" />
+                </div>
+                <div class="config-sectors" id="sectorCheckboxes">
+                    <!-- 动态生成 -->
+                </div>
+            </div>
+        </div><!-- /subtabWatch -->
     </div>
 
-    <script src="js/config.js?v=20260801a"></script>
+    <script src="js/config.js?v=20260907a"></script>
     <script src="js/trading_calendar.js?v=20260718a"></script>
     <script src="js/eastmoney_api.js?v=20260702a"></script>
     <script src="js/charts.js?v=20260817b"></script>
-    <script src="js/app.js?v=20260817b"></script>
+    <script src="js/app.js?v=20260907a"></script>
 </body>
 </html>

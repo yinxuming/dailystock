@@ -2,14 +2,15 @@
  * 每日复盘渲染模块（FupanRenderer）
  *
  * 职责：四个子tab的DOM渲染（数据由FupanData提供，图表由FupanCharts提供）
- * - renderMarket  大盘：指数卡片、市场概况、成交额/涨停家数趋势
- * - renderSectors 板块轮动：行业/概念榜单、近10日行业轮动热力矩阵
- * - renderZT      涨跌停：统计卡、涨停/跌停/炸板池、连板梯队、晋级率、情绪
- * - renderScore   评分预测：Top5卡片（雷达图）、评分全表、模型说明
+ * - renderMarket  大盘：指数卡片（全A置顶/环比/点击分时）、市场概况环比、全市场成交额（末5日标值）、涨跌停与市场宽度趋势（hover数值）
+ * - renderSectors 板块轮动：全部/行业/概念涨跌榜TOP50（关注板块筛选）、近10日轮动矩阵（涨跌双榜+可调数量+固定身份色）
+ * - renderZT      涨跌停：统计卡、分板块池列表（同花顺模式分类栏）、连板梯队（两行chip/晋级率/未晋级置灰）、晋级率、情绪
+ * - renderScore   评分预测：Top5卡片（雷达图）、阈值设置（前端重算）、全量评分表、近5日回测正确率、模型说明
  *
  * 渲染约定：
  * - 板型徽章色：一字板(红最强)>T字(橙)>厂字(黄)>回封(蓝)>换手(灰蓝)>未判定(灰)
  * - 梯队角色色：龙头(金)>跟风(蓝)>首板(灰)>补涨候选(紫)
+ * - 通用交互：.stock-table 表头点击排序（makeSortable）；勾选/下拉状态经 FupanData.getSetting/setSetting 持久化
  */
 const FupanRenderer = (function () {
 
@@ -126,6 +127,89 @@ const FupanRenderer = (function () {
      */
     function section(title, bodyHtml) {
         return `<section class="fp-section"><h3 class="fp-section-title">${esc(title)}</h3>${bodyHtml}</section>`;
+    }
+
+    // ===== 通用表格排序（TODO5.6.1：所有列表支持点击表头排序） =====
+
+    /**
+     * 为表格绑定表头点击排序（幂等）
+     * 规则：数值列（td[data-v]或可解析数字文本）按数值排序，否则按文本localeCompare；
+     *      点击同列循环 降序→升序→还原，表头显示▼/▲指示；无效值(--等)始终排末尾
+     * @param {HTMLElement} tableEl .stock-table 表格元素
+     */
+    function makeSortable(tableEl) {
+        if (!tableEl || tableEl.dataset.sortableBound || tableEl.dataset.noSort) return;
+        tableEl.dataset.sortableBound = '1';
+        const thead = tableEl.querySelector('thead');
+        const tbody = tableEl.querySelector('tbody');
+        if (!thead || !tbody) return;
+        const ths = Array.from(thead.querySelectorAll('th'));
+
+        /**
+         * 提取单元格排序值
+         * @param {HTMLElement} tr 行元素
+         * @param {number} idx 列序号
+         * @returns {{num:number}|{text:string}|{missing:true}} 数值/文本/缺失
+         */
+        function cellInfo(tr, idx) {
+            const td = tr.children[idx];
+            if (!td) return { missing: true };
+            const raw = (td.dataset.v !== undefined ? td.dataset.v : td.textContent).trim();
+            if (raw === '' || raw === '--') return { missing: true };
+            const m = raw.replace(/[,\s]/g, '').match(/^-?\d+(\.\d+)?$/);
+            return m ? { num: parseFloat(m[0]) } : { text: raw };
+        }
+
+        ths.forEach((th, idx) => {
+            th.classList.add('th-sortable');
+            th.title = (th.title ? th.title + '\n' : '') + '点击排序';
+            th.addEventListener('click', () => {
+                const prev = th.dataset.sortDir;         // undefined/'desc'/'asc'
+                const dir = !prev ? 'desc' : (prev === 'desc' ? 'asc' : null);
+                ths.forEach(t => { delete t.dataset.sortDir; t.classList.remove('th-asc', 'th-desc'); });
+                if (!tbody.children.length) return;
+                // 首次点击时保存原始行序（还原用）
+                if (!tbody.__origRows) tbody.__origRows = Array.from(tbody.children);
+                if (dir) {
+                    th.dataset.sortDir = dir;
+                    th.classList.add(dir === 'desc' ? 'th-desc' : 'th-asc');
+                    const infos = Array.from(tbody.children).map(tr => ({ tr, v: cellInfo(tr, idx) }));
+                    const anyNum = infos.some(x => x.v.num !== undefined);
+                    const numeric = anyNum && infos.every(x => x.v.num !== undefined || x.v.missing);
+                    infos.sort((a, b) => {
+                        // 缺失值（--/空）固定排末尾
+                        if (a.v.missing !== b.v.missing) return a.v.missing ? 1 : -1;
+                        let cmp;
+                        if (numeric) cmp = a.v.num - b.v.num;
+                        else cmp = String(a.v.text || '').localeCompare(String(b.v.text || ''), 'zh-CN');
+                        return dir === 'desc' ? -cmp : cmp;
+                    });
+                    infos.forEach(x => tbody.appendChild(x.tr));
+                } else {
+                    // 第三次点击：还原原始顺序
+                    (tbody.__origRows || []).forEach(r => tbody.appendChild(r));
+                }
+            });
+        });
+    }
+
+    /**
+     * 为容器内全部.stock-table绑定排序（渲染完列表后统一调用）
+     * @param {HTMLElement} root 容器
+     */
+    function bindSortTables(root) {
+        (root || document).querySelectorAll('table.stock-table').forEach(makeSortable);
+    }
+
+    /**
+     * 生成复选框HTML（状态持久化由调用方绑定change事件）
+     * @param {string} key data属性名（data-fp-xxx）
+     * @param {boolean} checked 是否勾选
+     * @param {string} label 文案
+     * @returns {string} label HTML
+     */
+    function checkHtml(key, checked, label) {
+        return `<label class="fp-check"><input type="checkbox" ${key}${checked ? ' checked' : ''}> ${esc(label)}</label>`;
     }
 
     // ===== 子tab1：大盘 =====
@@ -252,106 +336,244 @@ const FupanRenderer = (function () {
 
     // ===== 子tab2：板块轮动 =====
 
+    // 板块视图与筛选的持久化key
+    const BOARD_VIEW_KEY = 'fupan_board_view';          // 全部/行业/概念
+    const BOARD_FOCUS_KEY = 'fupan_sectors_focus_only'; // 仅显示关注板块
+    const MATRIX_COUNT_KEY = 'fupan_matrix_count';      // 矩阵每列涨跌榜板块数
+    const MATRIX_FOCUS_KEY = 'fupan_matrix_focus_only'; // 矩阵仅显示关注板块
+    const BOARD_TOP_N = 50;                             // 涨跌榜条数上限
+
     /**
      * 渲染板块轮动tab
-     * 主流程：行业/概念榜单（子tab切换） → 近10日行业轮动热力矩阵
-     * 矩阵数据：行=近10日涨幅榜TOP5高频板块，列=交易日，值=当日板块涨幅
+     * 主流程：当日板块涨跌榜（全部/行业/概念，默认全部；关注板块筛选）→ 近10日轮动矩阵（涨跌双榜、数量可调、关注筛选、固定身份色）
      * @param {HTMLElement} container 容器
      * @param {Object} day 单日复盘数据
      * @param {string} dateStr 当前日期
-     * @param {Function} getDayFn 异步取某日数据（矩阵多日回溯）
      */
-    async function renderSectors(container, day, dateStr, getDayFn) {
+    function renderSectors(container, day, dateStr) {
         const sectors = day.sectors || {};
 
-        // 1. 榜单（行业/概念切换）
+        // 工具栏状态（持久化：视图默认"全部"，关注筛选默认不勾选）
+        const view = FupanData.getSetting(BOARD_VIEW_KEY, 'all');
+        const focusOnly = FupanData.getSetting(BOARD_FOCUS_KEY, false);
+        const mCount = clampMatrixCount(FupanData.getSetting(MATRIX_COUNT_KEY, 5));
+        const mFocus = FupanData.getSetting(MATRIX_FOCUS_KEY, false);
+
         const boardHtml = `
-            <div class="fp-board-switch">
-                <button class="sub-tab active" data-fp-board="industry">行业</button>
-                <button class="sub-tab" data-fp-board="concept">概念</button>
+            <div class="fp-board-toolbar">
+                <div class="fp-board-switch">
+                    <button class="sub-tab${view === 'all' ? ' active' : ''}" data-fp-board="all" title="行业+概念合并排序">全部</button>
+                    <button class="sub-tab${view === 'industry' ? ' active' : ''}" data-fp-board="industry">行业</button>
+                    <button class="sub-tab${view === 'concept' ? ' active' : ''}" data-fp-board="concept">概念</button>
+                </div>
+                ${checkHtml('data-fp-focus-only', focusOnly, '仅显示关注板块')}
             </div>
             <div class="fp-board-panels" id="fpBoardPanels"></div>`;
 
-        // 2. 矩阵骨架（加载中提示，数据异步填充）
-        const matrixHtml = '<div class="fp-matrix-wrap" id="fpMatrixWrap"><div class="loading"><div class="loading-spinner"></div><span class="loading-text">正在加载近10日板块数据...</span></div></div>';
+        const matrixHtml = `
+            <div class="fp-board-toolbar">
+                <label class="fp-check">每列显示
+                    <input type="number" class="fp-matrix-n" data-fp-matrix-n min="3" max="10" step="1" value="${mCount}"> 个板块（涨/跌各）
+                </label>
+                ${checkHtml('data-fp-matrix-focus', mFocus, '仅显示关注板块')}
+            </div>
+            <div class="fp-rot-wrap" id="fpMatrixWrap">
+                <div class="loading"><div class="loading-spinner"></div><span class="loading-text">正在加载近10日板块数据...</span></div>
+            </div>`;
 
         container.innerHTML = `
             ${section('当日板块涨跌榜', boardHtml)}
             ${section('近10日行业轮动矩阵', matrixHtml)}`;
 
-        // 渲染榜单面板（含切换事件）
-        renderBoardPanels(document.getElementById('fpBoardPanels'), sectors);
+        const panelEl = document.getElementById('fpBoardPanels');
+        const matrixWrap = document.getElementById('fpMatrixWrap');
 
-        // 3. 异步构建矩阵（近10日行业涨幅数据）
-        try {
-            const dates = await FupanData.getRecentDates(dateStr, 10);
-            const daysData = await Promise.all(dates.map(d => getDayFn(d)));
-            buildMatrix(document.getElementById('fpMatrixWrap'), dates, daysData);
-        } catch (e) {
-            const wrap = document.getElementById('fpMatrixWrap');
-            if (wrap) wrap.innerHTML = `<div class="error"><span>矩阵加载失败: ${esc(e.message)}</span></div>`;
-        }
-    }
+        // 榜单渲染（关注筛选变化时整建）
+        const rebuildBoards = () => {
+            renderBoardPanels(panelEl, sectors,
+                FupanData.getSetting(BOARD_VIEW_KEY, 'all'),
+                FupanData.getSetting(BOARD_FOCUS_KEY, false));
+            bindSortTables(panelEl);
+        };
+        rebuildBoards();
 
-    /**
-     * 渲染行业/概念榜单面板（涨跌双榜）
-     * @param {HTMLElement} panelEl 面板容器
-     * @param {Object} sectors sectors数据 {industry:{topUp,topDown}, concept:{topUp,topDown}}
-     */
-    function renderBoardPanels(panelEl, sectors) {
-        ['industry', 'concept'].forEach(board => {
-            const data = sectors[board] || { topUp: [], topDown: [] };
-            const upTable = boardTable(data.topUp, true);
-            const downTable = boardTable(data.topDown, false);
-            const panel = document.createElement('div');
-            panel.className = 'fp-board-panel';
-            panel.dataset.fpBoardPanel = board;
-            panel.style.display = board === 'industry' ? '' : 'none';
-            panel.innerHTML = `
-                <div class="fp-board-cols">
-                    <div><h4 class="fp-chart-title change-up">涨幅榜 TOP15</h4>${upTable}</div>
-                    <div><h4 class="fp-chart-title change-down">跌幅榜 TOP15</h4>${downTable}</div>
-                </div>`;
-            panelEl.appendChild(panel);
-        });
-
-        // 榜单子tab切换
-        panelEl.closest('.fp-section').querySelectorAll('[data-fp-board]').forEach(btn => {
+        // 视图切换（持久化）
+        container.querySelectorAll('[data-fp-board]').forEach(btn => {
             btn.addEventListener('click', () => {
-                const board = btn.dataset.fpBoard;
-                panelEl.closest('.fp-section').querySelectorAll('[data-fp-board]').forEach(b => {
-                    b.classList.toggle('active', b === btn);
-                });
+                FupanData.setSetting(BOARD_VIEW_KEY, btn.dataset.fpBoard);
+                container.querySelectorAll('[data-fp-board]').forEach(b => b.classList.toggle('active', b === btn));
                 panelEl.querySelectorAll('[data-fp-board-panel]').forEach(p => {
-                    p.style.display = p.dataset.fpBoardPanel === board ? '' : 'none';
+                    p.style.display = p.dataset.fpBoardPanel === btn.dataset.fpBoard ? '' : 'none';
                 });
             });
         });
+
+        // 关注板块筛选（持久化，重建榜单）
+        const focusCb = container.querySelector('[data-fp-focus-only]');
+        if (focusCb) focusCb.addEventListener('change', () => {
+            FupanData.setSetting(BOARD_FOCUS_KEY, focusCb.checked);
+            rebuildBoards();
+            // 保持当前视图面板可见
+            const cur = FupanData.getSetting(BOARD_VIEW_KEY, 'all');
+            panelEl.querySelectorAll('[data-fp-board-panel]').forEach(p => {
+                p.style.display = p.dataset.fpBoardPanel === cur ? '' : 'none';
+            });
+        });
+
+        // 矩阵（近10日，异步多日取数）
+        const rebuildMatrix = async () => {
+            const n = clampMatrixCount(FupanData.getSetting(MATRIX_COUNT_KEY, 5));
+            const mFocusNow = FupanData.getSetting(MATRIX_FOCUS_KEY, false);
+            try {
+                const dates = await FupanData.getRecentDates(dateStr, 10);
+                const daysData = await Promise.all(dates.map(d => FupanData.getDay(d)));
+                buildMatrix(matrixWrap, dates, daysData, n, mFocusNow);
+            } catch (e) {
+                matrixWrap.innerHTML = `<div class="error"><span>矩阵加载失败: ${esc(e.message)}</span></div>`;
+            }
+        };
+        rebuildMatrix();
+
+        // 矩阵板块数调整（持久化，重建矩阵）
+        const nInput = container.querySelector('[data-fp-matrix-n]');
+        if (nInput) nInput.addEventListener('change', () => {
+            const n = clampMatrixCount(nInput.value);
+            nInput.value = n;
+            FupanData.setSetting(MATRIX_COUNT_KEY, n);
+            rebuildMatrix();
+        });
+        // 矩阵关注筛选（持久化，重建矩阵）
+        const mFocusCb = container.querySelector('[data-fp-matrix-focus]');
+        if (mFocusCb) mFocusCb.addEventListener('change', () => {
+            FupanData.setSetting(MATRIX_FOCUS_KEY, mFocusCb.checked);
+            rebuildMatrix();
+        });
     }
 
     /**
-     * 生成板块榜单表格HTML
+     * 矩阵板块数钳制（3~10，默认5）
+     * @param {*} v 输入值
+     * @returns {number}
+     */
+    function clampMatrixCount(v) {
+        const n = Math.round(Number(v));
+        if (isNaN(n)) return 5;
+        return Math.max(3, Math.min(10, n));
+    }
+
+    /**
+     * 关注板块名称集合（原始名集合；selectedSectors_all 中行业"_行"后缀归一为原始名）
+     * @param {string} type 'industry'/'concept'/'all'（all=三类合并）
+     * @returns {Set<string>} 原始板块名集合
+     */
+    function watchedNameSet(type) {
+        const set = new Set();
+        const absorb = arr => (arr || []).forEach(n => set.add(String(n).replace(/_行$/, '')));
+        if (type === 'industry' || type === 'all') absorb(FupanData.getWatchedSectors('industry'));
+        if (type === 'concept' || type === 'all') absorb(FupanData.getWatchedSectors('concept'));
+        if (type === 'all') absorb(FupanData.getWatchedSectors('all'));
+        return set;
+    }
+
+    /**
+     * 组装某视图的板块涨跌榜数据（行携带type用于关注匹配）
+     * 全部视图 = 行业+概念合并按涨跌幅排序；同名时行业显示名加"_行"后缀（仅显示，匹配仍用原名）
+     * @param {Object} sectors day.sectors
+     * @param {string} view all/industry/concept
+     * @returns {{up: Array, down: Array}}
+     */
+    function boardsForView(sectors, view) {
+        const pick = (board, list) => (((sectors[board] || {})[list]) || [])
+            .map(r => Object.assign({ type: board }, r));
+        if (view === 'industry') return { up: pick('industry', 'topUp'), down: pick('industry', 'topDown') };
+        if (view === 'concept') return { up: pick('concept', 'topUp'), down: pick('concept', 'topDown') };
+        // 全部：合并排序（跌幅榜由低到高）
+        const indUp = pick('industry', 'topUp'), indDown = pick('industry', 'topDown');
+        const conUp = pick('concept', 'topUp'), conDown = pick('concept', 'topDown');
+        // 显示名加"_行"后缀（行业与概念同名时，便于区分）
+        const conNames = new Set(conUp.concat(conDown).map(r => r.name));
+        indUp.concat(indDown).forEach(r => { r.displayName = conNames.has(r.name) ? r.name + '_行' : r.name; });
+        const up = indUp.concat(conUp).sort((a, b) => (b.change ?? -999) - (a.change ?? -999));
+        const down = indDown.concat(conDown).sort((a, b) => (a.change ?? 999) - (b.change ?? 999));
+        return { up, down };
+    }
+
+    /**
+     * 按关注板块过滤榜单行
+     * @param {Array} rows 榜单行（含type/name）
+     * @param {string} view 当前视图
+     * @returns {Array} 过滤后行
+     */
+    function filterWatched(rows, view) {
+        const ind = watchedNameSet('industry');
+        const con = watchedNameSet('concept');
+        const all = watchedNameSet('all');
+        return rows.filter(r => {
+            if (r.type === 'industry') return ind.has(r.name) || all.has(r.name);
+            return con.has(r.name) || all.has(r.name);
+        });
+    }
+
+    /**
+     * 渲染板块榜单面板（全部/行业/概念三面板，涨跌双榜TOP50）
+     * @param {HTMLElement} panelEl 面板容器
+     * @param {Object} sectors sectors数据
+     * @param {string} view 当前视图 all/industry/concept
+     * @param {boolean} focusOnly 是否仅显示关注板块
+     */
+    function renderBoardPanels(panelEl, sectors, view, focusOnly) {
+        panelEl.innerHTML = '';
+        ['all', 'industry', 'concept'].forEach(board => {
+            const data = boardsForView(sectors, board);
+            const upRows = focusOnly ? filterWatched(data.up, board) : data.up;
+            const downRows = focusOnly ? filterWatched(data.down, board) : data.down;
+            const emptyHint = focusOnly && !watchedNameSet('all').size;
+            const upHtml = emptyHint ? FOCUS_EMPTY_HINT : boardTable(upRows, true);
+            const downHtml = emptyHint ? FOCUS_EMPTY_HINT : boardTable(downRows, false);
+            const upTitle = focusOnly ? `涨幅榜（关注 ${upRows.length}）` : `涨幅榜 TOP50`;
+            const downTitle = focusOnly ? `跌幅榜（关注 ${downRows.length}）` : `跌幅榜 TOP50`;
+            const panel = document.createElement('div');
+            panel.className = 'fp-board-panel';
+            panel.dataset.fpBoardPanel = board;
+            panel.style.display = board === view ? '' : 'none';
+            panel.innerHTML = `
+                <div class="fp-board-cols">
+                    <div><h4 class="fp-chart-title change-up">${upTitle}</h4>${upHtml}</div>
+                    <div><h4 class="fp-chart-title change-down">${downTitle}</h4>${downHtml}</div>
+                </div>`;
+            panelEl.appendChild(panel);
+        });
+    }
+
+    // 关注板块为空时的提示文案
+    const FOCUS_EMPTY_HINT = '<div class="fp-empty">暂未配置关注板块（板块资金菜单 → 关注板块管理 勾选）</div>';
+
+    /**
+     * 生成板块榜单表格HTML（TOP50，数值格带data-v支持表头排序）
      * @param {Array} list 板块数组
      * @param {boolean} isUp 涨幅榜true/跌幅榜false
      * @returns {string} table HTML
      */
     function boardTable(list, isUp) {
         if (!list || !list.length) return '<div class="fp-empty">暂无数据</div>';
-        const rows = list.slice(0, 15).map(s => `
+        const rows = list.slice(0, BOARD_TOP_N).map(s => {
+            const inflow = s.mainNetInflow;
+            return `
             <tr>
-                <td class="fp-sec-name" title="${esc(s.name)}">${esc(s.name)}</td>
-                ${changeTd(s.change, true)}
-                <td class="change-up">${s.upCount ?? '--'}</td>
-                <td class="change-down">${s.downCount ?? '--'}</td>
+                <td class="fp-sec-name" title="${esc(s.name)}">${esc(s.displayName || s.name)}</td>
+                <td class="${FupanData.changeClass(s.change)}" data-v="${s.change ?? ''}">${FupanData.formatChange(s.change)}%</td>
+                <td data-v="${s.upCount ?? ''}">${s.upCount ?? '--'}</td>
+                <td data-v="${s.downCount ?? ''}">${s.downCount ?? '--'}</td>
                 <td>${esc(s.leadStock || '--')}</td>
-                ${changeTd(s.leadChange, true)}
-                <td class="${(s.mainNetInflow || 0) >= 0 ? 'change-up' : 'change-down'}">${FupanData.formatAmount(s.mainNetInflow)}</td>
-            </tr>`).join('');
+                <td class="${FupanData.changeClass(s.leadChange)}" data-v="${s.leadChange ?? ''}">${FupanData.formatChange(s.leadChange)}%</td>
+                <td class="${(inflow || 0) >= 0 ? 'change-up' : 'change-down'}" data-v="${inflow ?? ''}">${FupanData.formatYi(inflow)}</td>
+            </tr>`;
+        }).join('');
         return `
             <div class="table-wrapper">
                 <table class="stock-table fp-board-table">
                     <thead><tr>
-                        <th>板块</th><th>涨跌幅</th><th>涨</th><th>跌</th><th>领涨股</th><th>领涨涨幅</th><th>主力净流入</th>
+                        <th>板块</th><th>涨跌幅%</th><th>涨</th><th>跌</th><th>领涨股</th><th>领涨涨幅%</th><th title="主力净流入，单位亿元">主力净流入(亿)</th>
                     </tr></thead>
                     <tbody>${rows}</tbody>
                 </table>
@@ -359,82 +581,110 @@ const FupanRenderer = (function () {
     }
 
     /**
-     * 构建近10日行业轮动热力矩阵
-     * 行选择逻辑：统计各日涨幅榜TOP5板块出现频次，取频次最高的12个板块
+     * 板块身份固定背景色（同名板块跨日期/跨格子同色，追踪轮动）
+     * @param {string} name 板块名
+     * @returns {string} CSS颜色
+     */
+    function sectorColor(name) {
+        let h = 0;
+        const s = String(name);
+        for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360;
+        return `hsl(${h}, 42%, 30%)`;
+    }
+
+    /**
+     * 构建近10日行业轮动矩阵（每列=一个交易日：上半涨幅榜TOP N、下半跌幅榜TOP N）
+     * 格子背景=板块身份固定色，涨跌幅文字红涨绿跌；仅显示关注板块时过滤非关注格子
      * @param {HTMLElement} wrap 矩阵容器
      * @param {string[]} dates 交易日列表（升序）
      * @param {Object[]} daysData 各日复盘数据（与dates等长）
+     * @param {number} n 每列涨/跌榜各显示板块数
+     * @param {boolean} focusOnly 是否仅显示关注板块
      */
-    function buildMatrix(wrap, dates, daysData) {
-        // 统计板块出现频次（每日topUp前5）
-        const freq = new Map();  // name -> 出现次数
-        const changeMap = new Map();  // name -> Map(date -> change)
-        daysData.forEach((day, di) => {
-            const top = ((day.sectors || {}).industry || {}).topUp || [];
-            top.slice(0, 5).forEach(sec => {
-                freq.set(sec.name, (freq.get(sec.name) || 0) + 1);
-            });
-            // 记录全部板块当日涨幅（矩阵值）
-            top.forEach(sec => {
-                if (!changeMap.has(sec.name)) changeMap.set(sec.name, new Map());
-                changeMap.get(sec.name).set(dates[di], sec.change);
-            });
-        });
-
-        // 高频板块（出现>=2次优先，按频次排序，最多12行；不足时补0次板块）
-        let names = Array.from(freq.entries())
-            .filter(([, c]) => c >= 2)
-            .sort((a, b) => b[1] - a[1])
-            .map(([n]) => n);
-        if (names.length < 8) {
-            // 补充当日涨幅榜靠前板块
-            const todayTop = (((daysData[daysData.length - 1] || {}).sectors || {}).industry || {}).topUp || [];
-            for (const sec of todayTop) {
-                if (names.length >= 12) break;
-                if (!names.includes(sec.name)) names.push(sec.name);
-            }
-        }
-        names = names.slice(0, 12);
-
-        if (!names.length) {
-            wrap.innerHTML = '<div class="fp-empty">暂无板块数据</div>';
+    function buildMatrix(wrap, dates, daysData, n, focusOnly) {
+        if (focusOnly && !watchedNameSet('all').size) {
+            wrap.innerHTML = FOCUS_EMPTY_HINT;
             return;
         }
+        const watched = watchedNameSet(focusOnly ? 'all' : 'none');
+        /**
+         * 某日某榜单的展示行（关注过滤后截断TOP N）
+         * @param {Object} secData 当日sectors.industry
+         * @param {string} listKey topUp/topDown
+         * @param {string} date 日期（title用）
+         */
+        const cellList = (secData, listKey, date) => {
+            let rows = ((secData || {})[listKey]) || [];
+            if (focusOnly) rows = rows.filter(r => watched.has(r.name));
+            return rows.slice(0, n).map(r => {
+                const chg = r.change;
+                const chgCls = chg > 0 ? 'fp-rot-up' : (chg < 0 ? 'fp-rot-down' : '');
+                return `<div class="fp-rot-cell" style="background:${sectorColor(r.name)}" title="${esc(r.name)} ${esc(date)}：${FupanData.formatChange(chg)}%">
+                    <span class="fp-rot-name" title="${esc(r.name)}">${esc(r.name)}</span>
+                    <span class="fp-rot-chg ${chgCls}">${FupanData.formatChange(chg)}%</span>
+                </div>`;
+            }).join('');
+        };
 
-        const rows = names.map(name => {
-            const byDate = changeMap.get(name) || new Map();
-            return {
-                name,
-                values: dates.map(d => byDate.has(d) ? byDate.get(d) : null)
-            };
-        });
+        const cols = dates.map((d, i) => {
+            const sec = (((daysData[i] || {}).sectors || {}).industry) || {};
+            return `
+                <div class="fp-rot-col">
+                    <div class="fp-rot-date">${esc(d.slice(5))}</div>
+                    ${cellList(sec, 'topUp', d) || '<div class="fp-rot-cell fp-rot-empty">--</div>'}
+                    <div class="fp-rot-divider" title="以下为当日跌幅榜">跌幅榜</div>
+                    ${cellList(sec, 'topDown', d) || '<div class="fp-rot-cell fp-rot-empty">--</div>'}
+                </div>`;
+        }).join('');
 
-        wrap.innerHTML = '';
-        wrap.appendChild(FupanCharts.heatMatrix({
-            dates,
-            rows,
-            cellSize: 40,
-            valueFormat: v => v.toFixed(2) + '%'
-        }));
-        // 图例说明
-        const legend = document.createElement('div');
-        legend.className = 'fp-matrix-legend';
-        legend.innerHTML = '<span>颜色=当日板块涨幅（红涨绿跌，深浅随幅度）| 行=近10日涨幅榜高频板块</span>';
-        wrap.appendChild(legend);
+        wrap.innerHTML = `
+            <div class="fp-rot-grid">${cols}</div>
+            <div class="fp-matrix-legend"><span>每列=交易日：上段涨幅榜/下段跌幅榜；背景色=板块身份色（同板块跨日同色），数字红涨绿跌</span></div>`;
     }
 
     // ===== 子tab3：涨跌停 =====
 
+    // 涨跌停池与梯队显示的持久化key
+    const ZT_CAT_KEY = 'fupan_zt_cat';              // 选中分类（'__all__'=全部）
+    const ZT_POOL_KEY = 'fupan_zt_pool';            // 池类型 zt/dt/zb
+    const LADDER_ROLE_KEY = 'fupan_ladder_role';    // 梯队显示身位（默认开）
+    const LADDER_TYPE_KEY = 'fupan_ladder_type';    // 梯队显示涨停类型（默认开）
+    const LADDER_FAILED_KEY = 'fupan_ladder_failed';// 梯队显示未晋级股票（默认关）
+
+    // 板型单字标签（梯队chip用，无数据不显示）
+    const LIMIT_TYPE_MINI = { '一字板': '一', 'T字板': 'T', '厂字板': '厂', '回封板': '回', '换手板': '换' };
+
+    /**
+     * 时刻字符串转秒数（封板时间排序用）
+     * @param {string} t "HH:MM:SS"/"HH:MM"
+     * @returns {number} 秒（非法返回Infinity）
+     */
+    function sealSecs(t) {
+        if (!t) return Infinity;
+        const p = String(t).split(':').map(Number);
+        if (p.length < 2 || p.some(isNaN)) return Infinity;
+        return (p[0] || 0) * 3600 + (p[1] || 0) * 60 + (p[2] || 0);
+    }
+
     /**
      * 渲染涨跌停tab
-     * 主流程：统计卡 → 池子三视图（涨停/跌停/炸板）→ 连板梯队 → 晋级率 → 情绪
+     * 主流程：统计卡 → 分板块池列表（左分类栏+右列表，同花顺模式）→ 连板梯队（两行chip/晋级率/未晋级置灰）
+     *        → 晋级率 → 情绪
      * @param {HTMLElement} container 容器
      * @param {Object} day 单日复盘数据
+     * @param {string} dateStr 当前交易日（取前一日数据对比用）
      */
-    function renderZT(container, day) {
+    async function renderZT(container, day, dateStr) {
         const stats = day.stats || {};
         const sentiment = day.sentiment || {};
         const metrics = sentiment.metrics || {};
+
+        // 0. 上一交易日数据（梯队未晋级股票/多显示一级用）
+        let prevDay = null;
+        try {
+            const dates = await FupanData.getRecentDates(dateStr, 2);
+            if (dates.length === 2) prevDay = await FupanData.getDay(dates[0]);
+        } catch (e) { /* 首日无前日数据，梯队降级为仅当日 */ }
 
         // 1. 统计卡
         const statsHtml = `
@@ -449,21 +699,23 @@ const FupanRenderer = (function () {
                 ${statCard('整体晋级率', FupanData.formatRate(stats.promotionRate))}
             </div>`;
 
-        // 2. 池子视图切换
+        // 2. 池子：左分类栏 + 右列表（列表内容由bindPools按持久化状态填充）
         const poolHtml = `
-            <div class="fp-board-switch">
-                <button class="sub-tab active" data-fp-pool="zt">涨停池 (${(day.ztpool || []).length})</button>
-                <button class="sub-tab" data-fp-pool="dt">跌停池 (${(day.dtpool || []).length})</button>
-                <button class="sub-tab" data-fp-pool="zb">炸板池 (${(day.zbpool || []).length})</button>
-            </div>
-            <div class="fp-board-panels">
-                <div data-fp-pool-panel="zt">${ztPoolTable(day.ztpool)}</div>
-                <div data-fp-pool-panel="dt" style="display:none">${dtPoolTable(day.dtpool)}</div>
-                <div data-fp-pool-panel="zb" style="display:none">${zbPoolTable(day.zbpool)}</div>
+            <div class="fp-zt-split">
+                <div class="fp-cat-bar" data-fp-cat-bar>${catBarTable(day)}</div>
+                <div class="fp-zt-list" data-fp-pool-list></div>
             </div>`;
 
-        // 3. 连板梯队
-        const ladderHtml = ladderView(day.ladder);
+        // 3. 连板梯队（工具栏复选框 + 梯队行，body可单独重渲染）
+        const ladderHtml = `
+            <div data-fp-ladder-section>
+                <div class="fp-board-toolbar fp-ladder-toolbar">
+                    ${checkHtml('data-fp-ladder-role', FupanData.getSetting(LADDER_ROLE_KEY, true), '显示身位')}
+                    ${checkHtml('data-fp-ladder-type', FupanData.getSetting(LADDER_TYPE_KEY, true), '涨停类型')}
+                    ${checkHtml('data-fp-ladder-failed', FupanData.getSetting(LADDER_FAILED_KEY, false), '未晋级股票')}
+                </div>
+                <div data-fp-ladder-body>${ladderBodyHtml(day, prevDay)}</div>
+            </div>`;
 
         // 4. 晋级率
         const promoHtml = promotionView(day.promotion);
@@ -485,25 +737,142 @@ const FupanRenderer = (function () {
 
         container.innerHTML = `
             ${section('涨跌停统计', statsHtml)}
-            ${section('涨跌停池', poolHtml)}
+            ${section('涨跌停池（分板块）', poolHtml)}
             ${section('连板梯队', ladderHtml)}
             ${section('晋级率', promoHtml)}
             ${section('市场情绪', sentimentHtml)}`;
 
-        // 池子子tab切换
-        container.querySelectorAll('[data-fp-pool]').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const pool = btn.dataset.fpPool;
-                container.querySelectorAll('[data-fp-pool]').forEach(b => b.classList.toggle('active', b === btn));
-                container.querySelectorAll('[data-fp-pool-panel]').forEach(p => {
-                    p.style.display = p.dataset.fpPoolPanel === pool ? '' : 'none';
-                });
-            });
-        });
+        bindPools(container, day);
+        bindLadderControls(container, day, prevDay);
+        // 全部列表绑定表头排序（分类栏除外）
+        bindSortTables(container);
     }
 
     /**
-     * 生成涨停池表格HTML
+     * 按行业聚合三类池数量（分类栏数据源）
+     * @param {Object} day 单日复盘数据
+     * @returns {Map<string, {zt:number, dt:number, zb:number}>} 行业 -> 数量（'__all__'=全部合计）
+     */
+    function buildCatStats(day) {
+        const stats = new Map();
+        const ensure = ind => {
+            if (!stats.has(ind)) stats.set(ind, { zt: 0, dt: 0, zb: 0 });
+            return stats.get(ind);
+        };
+        (day.ztpool || []).forEach(s => ensure(s.industry || '其他').zt++);
+        (day.dtpool || []).forEach(s => ensure(s.industry || '其他').dt++);
+        (day.zbpool || []).forEach(s => ensure(s.industry || '其他').zb++);
+        return stats;
+    }
+
+    /**
+     * 生成分类栏表格HTML（首行全部，其余按涨停数降序）
+     * @param {Object} day 单日复盘数据
+     * @returns {string} table HTML
+     */
+    function catBarTable(day) {
+        const stats = buildCatStats(day);
+        const total = { zt: 0, dt: 0, zb: 0 };
+        const inds = [];
+        stats.forEach((v, k) => {
+            total.zt += v.zt; total.dt += v.dt; total.zb += v.zb;
+            if (v.zt || v.dt || v.zb) inds.push({ name: k, ...v });
+        });
+        inds.sort((a, b) => b.zt - a.zt || b.dt - a.dt || b.zb - a.zb || a.name.localeCompare(b.name, 'zh-CN'));
+        /**
+         * 单行HTML
+         */
+        const rowHtml = (name, v) => `
+            <tr data-cat="${esc(name)}" title="点击分类名/涨停数查看涨停列表，跌停数/炸板数同理">
+                <td class="fp-cat-name">${esc(name === '__all__' ? '全部' : name)}</td>
+                <td class="fp-cat-cell cell-zt" data-pool="zt">${v.zt || '<i class="fp-cat-zero">0</i>'}</td>
+                <td class="fp-cat-cell cell-dt" data-pool="dt">${v.dt || '<i class="fp-cat-zero">0</i>'}</td>
+                <td class="fp-cat-cell cell-zb" data-pool="zb">${v.zb || '<i class="fp-cat-zero">0</i>'}</td>
+            </tr>`;
+        return `
+            <div class="table-wrapper">
+                <table class="stock-table fp-cat-table" data-no-sort="1" title="分类栏：点击分类或数量切换右侧列表">
+                    <thead><tr><th>分类</th><th>涨停</th><th>跌停</th><th>炸板</th></tr></thead>
+                    <tbody>${rowHtml('__all__', total)}${inds.map(i => rowHtml(i.name, i)).join('')}</tbody>
+                </table>
+            </div>`;
+    }
+
+    /**
+     * 绑定池分类栏交互（点击分类/数量切列表；选择状态持久化）
+     * @param {HTMLElement} container tab容器
+     * @param {Object} day 单日复盘数据
+     */
+    function bindPools(container, day) {
+        const bar = container.querySelector('[data-fp-cat-bar]');
+        const listEl = container.querySelector('[data-fp-pool-list]');
+        if (!bar || !listEl) return;
+
+        const select = (cat, pool) => {
+            FupanData.setSetting(ZT_CAT_KEY, cat);
+            FupanData.setSetting(ZT_POOL_KEY, pool);
+            bar.querySelectorAll('tr[data-cat]').forEach(tr => {
+                tr.classList.toggle('fp-cat-selected', tr.dataset.cat === cat);
+            });
+            bar.querySelectorAll('td.fp-cat-cell').forEach(td => {
+                td.classList.toggle('fp-cat-cell-active',
+                    td.dataset.pool === pool && td.closest('tr').dataset.cat === cat);
+            });
+            renderPoolList(listEl, day, cat, pool);
+            bindSortTables(listEl);
+        };
+
+        bar.addEventListener('click', e => {
+            const td = e.target.closest('td');
+            if (!td) return;
+            const tr = td.closest('tr[data-cat]');
+            if (!tr) return;
+            select(tr.dataset.cat, td.dataset.pool || 'zt');
+        });
+
+        // 恢复持久化状态（分类不存在时回退全部）
+        const savedCat = FupanData.getSetting(ZT_CAT_KEY, '__all__');
+        const savedPool = FupanData.getSetting(ZT_POOL_KEY, 'zt');
+        const pool = ['zt', 'dt', 'zb'].includes(savedPool) ? savedPool : 'zt';
+        const catExists = savedCat === '__all__'
+            || Array.from(bar.querySelectorAll('tr[data-cat]')).some(tr => tr.dataset.cat === savedCat);
+        select(catExists ? savedCat : '__all__', pool);
+    }
+
+    /**
+     * 渲染右侧池列表（按分类过滤+默认排序）
+     * @param {HTMLElement} listEl 列表容器
+     * @param {Object} day 单日复盘数据
+     * @param {string} cat 分类（'__all__'=全部）
+     * @param {string} pool 池类型 zt/dt/zb
+     */
+    function renderPoolList(listEl, day, cat, pool) {
+        const poolNames = { zt: '涨停池', dt: '跌停池', zb: '炸板池' };
+        const poolKeys = { zt: 'ztpool', dt: 'dtpool', zb: 'zbpool' };
+        let rows = (day[poolKeys[pool]] || []).slice();
+        if (cat !== '__all__') rows = rows.filter(s => (s.industry || '其他') === cat);
+        rows = sortPoolRows(rows, pool);
+        const catLabel = cat === '__all__' ? '全部' : cat;
+        const table = pool === 'zt' ? ztPoolTable(rows) : (pool === 'dt' ? dtPoolTable(rows) : zbPoolTable(rows));
+        listEl.innerHTML = `<h4 class="fp-chart-title">${esc(poolNames[pool])}：${esc(catLabel)}（${rows.length}只）</h4>${table}`;
+    }
+
+    /**
+     * 池列表默认排序（涨停/跌停按连板数降序再封板时间升序；炸板按首封时间升序）
+     * @param {Array} rows 池数据
+     * @param {string} pool 池类型
+     * @returns {Array}
+     */
+    function sortPoolRows(rows, pool) {
+        if (pool === 'zb') return rows.sort((a, b) => sealSecs(a.firstSealTime) - sealSecs(b.firstSealTime));
+        const lbKey = pool === 'dt' ? 'lbCount' : 'lbCount';
+        const timeKey = pool === 'dt' ? 'lastSealTime' : 'firstSealTime';
+        return rows.sort((a, b) =>
+            (b[lbKey] || 1) - (a[lbKey] || 1) || sealSecs(a[timeKey]) - sealSecs(b[timeKey]));
+    }
+
+    /**
+     * 生成涨停池表格HTML（数值格带data-v支持表头排序）
      * @param {Array} pool 涨停池
      * @returns {string} table HTML
      */
@@ -511,20 +880,20 @@ const FupanRenderer = (function () {
         if (!pool || !pool.length) return '<div class="fp-empty">当日无涨停</div>';
         const rows = pool.map((s, i) => `
             <tr>
-                <td class="col-rank">${i + 1}</td>
+                <td class="col-rank" data-v="${i + 1}">${i + 1}</td>
                 <td class="col-name">${esc(s.name)}</td>
                 <td class="col-code">${esc(s.code)}</td>
-                <td>${s.price !== null ? s.price.toFixed(2) : '--'}</td>
-                ${changeTd(s.change, true)}
-                <td>${FupanData.formatAmount(s.amount)}</td>
-                <td>${FupanData.formatAmount(s.floatMV)}</td>
-                <td>${s.turnover !== null && s.turnover !== undefined ? s.turnover.toFixed(2) + '%' : '--'}</td>
-                <td class="change-up">${FupanData.formatAmount(s.sealFund)}</td>
-                <td>${s.sealRatio !== null && s.sealRatio !== undefined ? s.sealRatio.toFixed(2) : '--'}</td>
-                <td>${esc(s.firstSealTime || '--')}</td>
-                <td>${esc(s.lastSealTime || '--')}</td>
-                <td>${s.openCount ?? 0}</td>
-                <td class="fp-lb">${s.lbCount ?? 1}板</td>
+                <td data-v="${s.price ?? ''}">${s.price !== null && s.price !== undefined ? s.price.toFixed(2) : '--'}</td>
+                <td class="${FupanData.changeClass(s.change)}" data-v="${s.change ?? ''}">${FupanData.formatChange(s.change)}%</td>
+                <td data-v="${s.amount ?? ''}">${FupanData.formatAmount(s.amount)}</td>
+                <td data-v="${s.floatMV ?? ''}">${FupanData.formatAmount(s.floatMV)}</td>
+                <td data-v="${s.turnover ?? ''}">${s.turnover !== null && s.turnover !== undefined ? s.turnover.toFixed(2) + '%' : '--'}</td>
+                <td class="change-up" data-v="${s.sealFund ?? ''}">${FupanData.formatAmount(s.sealFund)}</td>
+                <td data-v="${s.sealRatio ?? ''}">${s.sealRatio !== null && s.sealRatio !== undefined ? s.sealRatio.toFixed(2) : '--'}</td>
+                <td data-v="${sealSecs(s.firstSealTime) === Infinity ? '' : sealSecs(s.firstSealTime)}">${esc(s.firstSealTime || '--')}</td>
+                <td data-v="${sealSecs(s.lastSealTime) === Infinity ? '' : sealSecs(s.lastSealTime)}">${esc(s.lastSealTime || '--')}</td>
+                <td data-v="${s.openCount ?? ''}">${s.openCount ?? 0}</td>
+                <td class="fp-lb" data-v="${s.lbCount ?? ''}">${s.lbCount ?? 1}板</td>
                 <td>${esc(s.stats || '--')}</td>
                 <td>${typeBadge(s.limitType)}</td>
                 <td class="fp-industry" title="${esc(s.industry || '')}">${esc(s.industry || '--')}</td>
@@ -533,8 +902,8 @@ const FupanRenderer = (function () {
             <div class="table-wrapper">
                 <table class="stock-table fp-pool-table">
                     <thead><tr>
-                        <th>#</th><th>名称</th><th>代码</th><th>现价</th><th>涨跌幅</th><th>成交额</th><th>流通市值</th>
-                        <th>换手</th><th>封单额</th><th title="封单额/成交额，越大封板越坚决">封成比</th>
+                        <th>#</th><th>名称</th><th>代码</th><th>现价</th><th>涨跌幅%</th><th>成交额</th><th>流通市值</th>
+                        <th>换手%</th><th>封单额</th><th title="封单额/成交额，越大封板越坚决">封成比</th>
                         <th>首次封板</th><th>最后封板</th><th>开板</th><th>连板</th><th>几天几板</th><th>板型</th><th>行业</th>
                     </tr></thead>
                     <tbody>${rows}</tbody>
@@ -543,7 +912,7 @@ const FupanRenderer = (function () {
     }
 
     /**
-     * 生成跌停池表格HTML
+     * 生成跌停池表格HTML（数值格带data-v支持表头排序）
      * @param {Array} pool 跌停池
      * @returns {string} table HTML
      */
@@ -551,24 +920,24 @@ const FupanRenderer = (function () {
         if (!pool || !pool.length) return '<div class="fp-empty">当日无跌停</div>';
         const rows = pool.map((s, i) => `
             <tr>
-                <td class="col-rank">${i + 1}</td>
+                <td class="col-rank" data-v="${i + 1}">${i + 1}</td>
                 <td class="col-name">${esc(s.name)}</td>
                 <td class="col-code">${esc(s.code)}</td>
-                <td>${s.price !== null ? s.price.toFixed(2) : '--'}</td>
-                ${changeTd(s.change, true)}
-                <td>${FupanData.formatAmount(s.amount)}</td>
-                <td>${s.turnover !== null && s.turnover !== undefined ? s.turnover.toFixed(2) + '%' : '--'}</td>
-                <td class="change-down">${FupanData.formatAmount(s.sealFund)}</td>
-                <td>${esc(s.lastSealTime || '--')}</td>
-                <td>${s.lbCount ?? 1}连跌</td>
+                <td data-v="${s.price ?? ''}">${s.price !== null && s.price !== undefined ? s.price.toFixed(2) : '--'}</td>
+                <td class="${FupanData.changeClass(s.change)}" data-v="${s.change ?? ''}">${FupanData.formatChange(s.change)}%</td>
+                <td data-v="${s.amount ?? ''}">${FupanData.formatAmount(s.amount)}</td>
+                <td data-v="${s.turnover ?? ''}">${s.turnover !== null && s.turnover !== undefined ? s.turnover.toFixed(2) + '%' : '--'}</td>
+                <td class="change-down" data-v="${s.sealFund ?? ''}">${FupanData.formatAmount(s.sealFund)}</td>
+                <td data-v="${sealSecs(s.lastSealTime) === Infinity ? '' : sealSecs(s.lastSealTime)}">${esc(s.lastSealTime || '--')}</td>
+                <td class="fp-lb" data-v="${s.lbCount ?? ''}">${s.lbCount ?? 1}连跌</td>
                 <td class="fp-industry" title="${esc(s.industry || '')}">${esc(s.industry || '--')}</td>
             </tr>`).join('');
         return `
             <div class="table-wrapper">
                 <table class="stock-table fp-pool-table">
                     <thead><tr>
-                        <th>#</th><th>名称</th><th>代码</th><th>现价</th><th>跌跌幅</th><th>成交额</th>
-                        <th>换手</th><th>封单额</th><th>最后封板</th><th>连续跌停</th><th>行业</th>
+                        <th>#</th><th>名称</th><th>代码</th><th>现价</th><th>跌跌幅%</th><th>成交额</th>
+                        <th>换手%</th><th>封单额</th><th>最后封板</th><th>连续跌停</th><th>行业</th>
                     </tr></thead>
                     <tbody>${rows}</tbody>
                 </table>
@@ -576,7 +945,7 @@ const FupanRenderer = (function () {
     }
 
     /**
-     * 生成炸板池表格HTML
+     * 生成炸板池表格HTML（数值格带data-v支持表头排序）
      * @param {Array} pool 炸板池
      * @returns {string} table HTML
      */
@@ -588,17 +957,17 @@ const FupanRenderer = (function () {
                 ? (s.price - s.limitPrice) / s.limitPrice * 100 : null;
             return `
             <tr>
-                <td class="col-rank">${i + 1}</td>
+                <td class="col-rank" data-v="${i + 1}">${i + 1}</td>
                 <td class="col-name">${esc(s.name)}</td>
                 <td class="col-code">${esc(s.code)}</td>
-                <td>${s.price !== null ? s.price.toFixed(2) : '--'}</td>
-                ${changeTd(s.change, true)}
-                <td>${s.limitPrice !== null && s.limitPrice !== undefined ? s.limitPrice.toFixed(2) : '--'}</td>
-                ${changeTd(gapPct, true)}
-                <td>${FupanData.formatAmount(s.amount)}</td>
-                <td>${s.turnover !== null && s.turnover !== undefined ? s.turnover.toFixed(2) + '%' : '--'}</td>
-                <td>${esc(s.firstSealTime || '--')}</td>
-                <td>${s.openCount ?? '--'}</td>
+                <td data-v="${s.price ?? ''}">${s.price !== null && s.price !== undefined ? s.price.toFixed(2) : '--'}</td>
+                <td class="${FupanData.changeClass(s.change)}" data-v="${s.change ?? ''}">${FupanData.formatChange(s.change)}%</td>
+                <td data-v="${s.limitPrice ?? ''}">${s.limitPrice !== null && s.limitPrice !== undefined ? s.limitPrice.toFixed(2) : '--'}</td>
+                <td class="${FupanData.changeClass(gapPct)}" data-v="${gapPct ?? ''}">${FupanData.formatChange(gapPct)}%</td>
+                <td data-v="${s.amount ?? ''}">${FupanData.formatAmount(s.amount)}</td>
+                <td data-v="${s.turnover ?? ''}">${s.turnover !== null && s.turnover !== undefined ? s.turnover.toFixed(2) + '%' : '--'}</td>
+                <td data-v="${sealSecs(s.firstSealTime) === Infinity ? '' : sealSecs(s.firstSealTime)}">${esc(s.firstSealTime || '--')}</td>
+                <td data-v="${s.openCount ?? ''}">${s.openCount ?? '--'}</td>
                 <td class="fp-industry" title="${esc(s.industry || '')}">${esc(s.industry || '--')}</td>
             </tr>`;
         }).join('');
@@ -606,8 +975,8 @@ const FupanRenderer = (function () {
             <div class="table-wrapper">
                 <table class="stock-table fp-pool-table">
                     <thead><tr>
-                        <th>#</th><th>名称</th><th>代码</th><th>现价</th><th>涨跌幅</th><th>涨停价</th><th>距涨停</th>
-                        <th>成交额</th><th>换手</th><th>首次封板</th><th>炸板次数</th><th>行业</th>
+                        <th>#</th><th>名称</th><th>代码</th><th>现价</th><th>涨跌幅%</th><th>涨停价</th><th>距涨停%</th>
+                        <th>成交额</th><th>换手%</th><th>首次封板</th><th>炸板次数</th><th>行业</th>
                     </tr></thead>
                     <tbody>${rows}</tbody>
                 </table>
@@ -615,28 +984,129 @@ const FupanRenderer = (function () {
     }
 
     /**
-     * 生成连板梯队视图HTML（从高板到首板，横向chips）
-     * @param {Array} ladder 梯队数据
-     * @returns {string} HTML
+     * 生成连板梯队HTML（工具栏 + 各板级行）
+     * @param {Object} day 单日复盘数据
+     * @param {Object|null} prevDay 前一日数据（未晋级股票/多显示一级）
+     * @returns {string} HTML（仅梯队行，工具栏由renderZT构建）
      */
-    function ladderView(ladder) {
-        if (!ladder || !ladder.length) return '<div class="fp-empty">当日无连板梯队</div>';
-        const levels = ladder.slice().sort((a, b) => b.level - a.level);
-        return levels.map(level => `
-            <div class="fp-ladder-row">
-                <div class="fp-ladder-level">
-                    <span class="fp-ladder-badge">${level.level}板</span>
-                    <span class="fp-ladder-count">${level.count}只</span>
-                </div>
-                <div class="fp-ladder-stocks">
-                    ${(level.stocks || []).map(s => `
-                        <span class="fp-ladder-chip" title="${esc(s.name)} ${esc(s.industry || '')} 首封${esc(s.firstSealTime || '--')} 封单${FupanData.formatAmount(s.sealFund)}">
-                            ${roleBadge(s.role)}${esc(s.name)}
-                            <span class="fp-chip-stats">${esc(s.stats || '')}</span>
-                            ${typeBadge(s.limitType)}
-                        </span>`).join('')}
-                </div>
-            </div>`).join('');
+    function ladderBodyHtml(day, prevDay) {
+        const levels = buildLadderLevels(day, prevDay);
+        if (!levels.length) return '<div class="fp-empty">当日无连板梯队</div>';
+        const roleOn = FupanData.getSetting(LADDER_ROLE_KEY, true);
+        const typeOn = FupanData.getSetting(LADDER_TYPE_KEY, true);
+        const failedOn = FupanData.getSetting(LADDER_FAILED_KEY, false);
+        return levels.map(lv => {
+            // 左侧：板级 + 家数 + 晋级率（首板/无昨日数据时不显示晋级率）
+            const rate = lv.promo && lv.promo.rate;
+            const rateHtml = (rate !== null && rate !== undefined)
+                ? `<span class="fp-ladder-promo ${rate >= 0.3 ? 'change-up' : (rate <= 0.1 ? 'change-down' : '')}">晋级率${(rate * 100).toFixed(0)}%</span>`
+                : '';
+            const chips = lv.stocks.map(s => ladderChip(s, roleOn, typeOn, false, null)).join('');
+            const failedChips = failedOn
+                ? lv.failed.map(s => ladderChip(s, roleOn, typeOn, true, lv.changeByCode)).join('')
+                : '';
+            return `
+                <div class="fp-ladder-row">
+                    <div class="fp-ladder-level">
+                        <span class="fp-ladder-badge">${lv.level}板</span>
+                        <span class="fp-ladder-count">${lv.stocks.length}只</span>
+                        ${rateHtml}
+                    </div>
+                    <div class="fp-ladder-stocks">${chips}${failedChips}</div>
+                </div>`;
+        }).join('');
+    }
+
+    /**
+     * 构建梯队层级数据（含未晋级股票与晋级率；昨日最高板今日无人晋级时多显示一级）
+     * @param {Object} day 单日复盘数据
+     * @param {Object|null} prevDay 前一日数据
+     * @returns {Array<{level, stocks, failed, promo, changeByCode}>} 高板→低板
+     */
+    function buildLadderLevels(day, prevDay) {
+        const ztpool = day.ztpool || [];
+        if (!ztpool.length) return [];
+        const todayCodes = new Set(ztpool.map(s => s.code));
+        const maxToday = Math.max(...ztpool.map(s => s.lbCount || 1));
+        const prevZt = (prevDay && prevDay.ztpool) || [];
+        const maxPrev = prevZt.length ? Math.max(...prevZt.map(s => s.lbCount || 1)) : 0;
+        const top = Math.max(maxToday, maxPrev + 1);
+
+        // 未晋级股票按目标板级分组（昨日N板 → 今日N+1板，今日池无此code）
+        const failedByLevel = {};
+        prevZt.forEach(s => {
+            if (todayCodes.has(s.code)) return;
+            const target = (s.lbCount || 1) + 1;
+            (failedByLevel[target] = failedByLevel[target] || []).push(s);
+        });
+        // 今日各板级股票（同层按首封时间升序）
+        const byLevel = {};
+        ztpool.forEach(s => (byLevel[s.lbCount || 1] = byLevel[s.lbCount || 1] || []).push(s));
+        // 今日炸板/跌停池行情（未晋级股展示今日涨跌幅，无则省略）
+        const changeByCode = new Map();
+        (day.zbpool || []).concat(day.dtpool || []).forEach(s => changeByCode.set(s.code, s.change));
+        const overall = (day.promotion || {}).overall || {};
+
+        const levels = [];
+        for (let L = top; L >= 1; L--) {
+            const stocks = (byLevel[L] || []).slice()
+                .sort((a, b) => sealSecs(a.firstSealTime) - sealSecs(b.firstSealTime));
+            const failed = failedByLevel[L] || [];
+            const promo = L >= 2 ? overall[(L - 1) + '->' + L] : null;
+            // 空板级（无今日股/无未晋级股/无晋级率桶）跳过
+            if (!stocks.length && !failed.length && !(promo && promo.yesterday)) continue;
+            levels.push({ level: L, stocks, failed, promo, changeByCode });
+        }
+        return levels;
+    }
+
+    /**
+     * 生成梯队股票chip（两行结构：名称+几天几板 / 身位+板型单字；无数据项整体省略）
+     * @param {Object} s 股票（今日池含role，昨日池无role）
+     * @param {boolean} roleOn 显示身位
+     * @param {boolean} typeOn 显示涨停类型
+     * @param {boolean} isFailed 是否未晋级股票（置灰+断标签）
+     * @param {Map|null} changeByCode 今日行情映射（未晋级股显示今日涨跌幅）
+     * @returns {string} chip HTML
+     */
+    function ladderChip(s, roleOn, typeOn, isFailed, changeByCode) {
+        const title = `${s.name} ${s.industry || ''} 首封${s.firstSealTime || '--'} 封单${FupanData.formatAmount(s.sealFund)}${isFailed ? '（昨日涨停今日未晋级）' : ''}`;
+        const l1 = `<span class="fp-chip-l1"><b class="fp-chip-name">${esc(s.name)}</b><i class="fp-chip-stats">${esc(s.stats || '')}</i></span>`;
+        let l2 = '';
+        if (isFailed) {
+            l2 += '<span class="fp-chip-broken" title="昨日涨停今日未晋级">断</span>';
+            const chg = changeByCode ? changeByCode.get(s.code) : null;
+            if (chg !== null && chg !== undefined) {
+                l2 += `<span class="fp-chip-chg ${FupanData.changeClass(chg)}">${FupanData.formatChange(chg)}%</span>`;
+            }
+        } else if (roleOn && s.role) {
+            l2 += roleBadge(s.role);
+        }
+        if (typeOn && s.limitType && LIMIT_TYPE_MINI[s.limitType]) {
+            l2 += `<span class="fp-type-mini ${LIMIT_TYPE_CLASS[s.limitType] || ''}" title="${esc(s.limitType)}">${LIMIT_TYPE_MINI[s.limitType]}</span>`;
+        }
+        const cls = isFailed ? ' fp-chip-dim' : '';
+        return `<span class="fp-ladder-chip2${cls}" title="${esc(title)}">${l1}${l2 ? `<span class="fp-chip-l2">${l2}</span>` : ''}</span>`;
+    }
+
+    /**
+     * 绑定梯队显示复选框（勾选变化持久化并仅重渲染梯队body）
+     * @param {HTMLElement} container tab容器
+     * @param {Object} day 单日复盘数据
+     * @param {Object|null} prevDay 前一日数据
+     */
+    function bindLadderControls(container, day, prevDay) {
+        const sec = container.querySelector('[data-fp-ladder-section]');
+        if (!sec) return;
+        const keys = { role: LADDER_ROLE_KEY, type: LADDER_TYPE_KEY, failed: LADDER_FAILED_KEY };
+        Object.keys(keys).forEach(k => {
+            const cb = sec.querySelector(`[data-fp-ladder-${k}]`);
+            if (cb) cb.addEventListener('change', () => {
+                FupanData.setSetting(keys[k], cb.checked);
+                const body = sec.querySelector('[data-fp-ladder-body]');
+                if (body) body.innerHTML = ladderBodyHtml(day, prevDay);
+            });
+        });
     }
 
     /**
@@ -658,10 +1128,10 @@ const FupanRenderer = (function () {
             const rateCls = (item.rate || 0) >= 0.3 ? 'change-up' : ((item.rate || 0) <= 0.1 ? 'change-down' : '');
             return `
                 <tr>
-                    <td>${esc(k.replace('->', '板→'))}板</td>
-                    <td>${item.yesterday ?? '--'}</td>
-                    <td>${item.promoted ?? '--'}</td>
-                    <td class="${rateCls}">${ratePct}%</td>
+                    <td data-v="${parseInt(k) || 0}">${esc(k.replace('->', '板→'))}板</td>
+                    <td data-v="${item.yesterday ?? ''}">${item.yesterday ?? '--'}</td>
+                    <td data-v="${item.promoted ?? ''}">${item.promoted ?? '--'}</td>
+                    <td class="${rateCls}" data-v="${item.rate ?? ''}">${ratePct}%</td>
                 </tr>`;
         }).join('');
 
@@ -774,7 +1244,10 @@ const FupanRenderer = (function () {
             <div data-fp-cfg-panel style="display:none"></div>
             ${section('Top5 关注标的（次日竞价参考）', cardsHtml)}
             ${section('全量评分（' + allScores.length + '只）', allTable)}
+            ${section('近5日回测（Top5晋级正确率）', '<div data-fp-backtest><div class="fp-empty">回测计算中...</div></div>')}
             ${section('模型说明', modelHtml)}`;
+
+        bindSortTables(container);
 
         // Top5卡片雷达图挂载（卡片模板中预留容器）
         container.querySelectorAll('[data-fp-radar]').forEach(box => {
@@ -792,6 +1265,107 @@ const FupanRenderer = (function () {
             panel.style.display = show ? '' : 'none';
             FupanData.setSetting('fupan_score_cfg_open', show);
         });
+
+        // 近5日回测（异步：保存阈值后此处展示对近5个交易日预测正确率的影响）
+        renderBacktest(container.querySelector('[data-fp-backtest]'), dateStr)
+            .catch(e => {
+                const box = container.querySelector('[data-fp-backtest]');
+                if (box) box.innerHTML = `<div class="error"><span>回测计算失败: ${esc(e.message)}</span></div>`;
+            });
+    }
+
+    /**
+     * 近5日回测（TODO5.5）：对当前交易日之前的最多5个交易日，
+     * 默认阈值基线=采集端落盘评分Top5；自定义阈值=前端按当前已保存配置重算Top5；
+     * 晋级判定=次日涨停池存在该股且连板数更高。展示整体正确率变化（百分点）与逐日明细。
+     * @param {HTMLElement} box 回测容器（null时跳过）
+     * @param {string} dateStr 当前交易日 YYYY-MM-DD
+     */
+    async function renderBacktest(box, dateStr) {
+        if (!box) return;
+        const dates = await FupanData.getAvailableDates();
+        const idx = dates.indexOf(dateStr);
+        if (idx < 0) { box.innerHTML = '<div class="fp-empty">当前日期无回测数据</div>'; return; }
+        const targets = dates.slice(Math.max(0, idx - 5), idx).reverse();
+        if (!targets.length) {
+            box.innerHTML = '<div class="fp-empty">暂无可回测交易日（需次日数据判定晋级结果）</div>';
+            return;
+        }
+
+        const config = FupanScoring.getSavedConfig();
+        const custom = config && !FupanScoring.isDefaultConfig(config) ? config : null;
+
+        const rows = [];
+        for (const d of targets) {
+            const i = dates.indexOf(d);
+            const [day, next] = await Promise.all([FupanData.getDay(d), FupanData.getDay(dates[i + 1])]);
+            /**
+             * Top5次日晋级判定（true=晋级）
+             */
+            const judge = top5 => (top5 || []).map(s => {
+                const ns = (next.ztpool || []).find(x => x.code === s.code);
+                return {
+                    name: s.name, code: s.code,
+                    ok: !!(ns && (ns.lbCount || 1) > (s.lbCount || 1))
+                };
+            });
+            const defR = judge((day.scores || {}).top5);
+            const cusR = custom ? judge(FupanScoring.rescoreDay(day, custom).top5) : null;
+            rows.push({ date: d, defR, cusR });
+        }
+
+        const okCount = r => (r || []).filter(x => x.ok).length;
+        const pct = (ok, total) => total ? (ok / total * 100).toFixed(0) + '%' : '--';
+        const totalDef = rows.reduce((a, r) => a + r.defR.length, 0);
+        const okDef = rows.reduce((a, r) => a + okCount(r.defR), 0);
+        const totalCus = custom ? rows.reduce((a, r) => a + r.cusR.length, 0) : 0;
+        const okCus = custom ? rows.reduce((a, r) => a + okCount(r.cusR), 0) : 0;
+
+        // 汇总行：默认 vs 自定义正确率（百分点差值）
+        let summaryHtml;
+        if (custom) {
+            const dPct = (totalCus && totalDef) ? (okCus / totalCus - okDef / totalDef) * 100 : 0;
+            summaryHtml = `
+                <div class="fp-bt-summary">
+                    <span>默认阈值：<b>${okDef}/${totalDef}</b>（${pct(okDef, totalDef)}）</span>
+                    <span>自定义阈值：<b>${okCus}/${totalCus}</b>（${pct(okCus, totalCus)}）</span>
+                    <span class="${dPct > 0 ? 'change-up' : (dPct < 0 ? 'change-down' : '')}">正确率变化：${dPct > 0 ? '+' : ''}${dPct.toFixed(1)}pp</span>
+                </div>`;
+        } else {
+            summaryHtml = `
+                <div class="fp-bt-summary">
+                    <span>默认阈值正确率：<b>${okDef}/${totalDef}</b>（${pct(okDef, totalDef)}）</span>
+                    <span class="fp-bt-hint">在"阈值设置"中调整并保存后，此处展示对近5日预测正确率的影响</span>
+                </div>`;
+        }
+
+        const rowsHtml = rows.map(r => {
+            const dOk = okCount(r.defR);
+            const cOk = r.cusR ? okCount(r.cusR) : null;
+            const delta = r.cusR ? cOk - dOk : null;
+            const deltaCls = delta > 0 ? 'change-up' : (delta < 0 ? 'change-down' : '');
+            // 明细：有自定义阈值时展示自定义Top5，否则展示默认Top5
+            const detail = (r.cusR || r.defR).map(x =>
+                `<span class="fp-bt-stock ${x.ok ? 'fp-bt-ok' : 'fp-bt-miss'}" title="${esc(x.name)}：${x.ok ? '次日晋级' : '次日未晋级'}">${esc(x.name)}${x.ok ? '✓' : '✗'}</span>`
+            ).join('');
+            return `<tr>
+                <td>${esc(r.date)}</td>
+                <td>${dOk}/${r.defR.length}</td>
+                <td>${r.cusR ? cOk + '/' + r.cusR.length : '--'}</td>
+                <td class="${deltaCls}">${delta === null ? '--' : (delta > 0 ? '+' : '') + delta}</td>
+                <td class="fp-bt-detail">${detail || '--'}</td>
+            </tr>`;
+        }).join('');
+
+        box.innerHTML = `
+            ${summaryHtml}
+            <div class="table-wrapper">
+                <table class="stock-table fp-bt-table">
+                    <thead><tr><th>交易日</th><th>默认正确</th><th>自定义正确</th><th>变化(只)</th><th>Top5明细（✓晋级/✗未晋级）</th></tr></thead>
+                    <tbody>${rowsHtml}</tbody>
+                </table>
+            </div>`;
+        bindSortTables(box);
     }
 
     /**

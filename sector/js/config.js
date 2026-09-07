@@ -2,31 +2,15 @@
  * 前端配置
  */
 const CONFIG = {
-    // 数据文件路径
-    // - GitHub Pages 部署：使用相对路径 './data/'（即自身仓库的 data/ 目录）
-    // - 本地启动服务测试：使用 GitHub Pages 在线缓存（本地 web/data/ 数据可能不全或旧）
-    //   URL 参数 ?localData=1 可强制使用本地数据（用于测试本地刚采集的数据）
-    // - GitHub Pages 支持 CORS，本地服务可跨域请求在线 JSON
+    // 数据文件路径（TODO5.3：独立部署项目为唯一板块数据缓存源，本地调试与线上统一走其线上缓存）
+    // - 默认：https://yinxuming.github.io/sector_analysis/data/（GitHub Pages 支持 CORS，可跨域请求）
+    // - URL 参数 ?localData=1 强制使用本地 ./data/（用于测试本地刚采集的数据）
     dataPath: (function () {
-        // URL 参数 ?localData=1 强制使用本地数据
         const params = new URLSearchParams(window.location.search);
         if (params.get('localData') === '1') {
             return './data/';
         }
-        const host = window.location.hostname;
-        // 本地服务（localhost/127.0.0.1/局域网IP）：从 GitHub Pages 在线缓存获取
-        const isLocalHost =
-            host === 'localhost' ||
-            host === '127.0.0.1' ||
-            /^192\.168\./.test(host) ||
-            /^10\./.test(host) ||
-            /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host);
-        if (isLocalHost) {
-            // 统一部署后数据在公开仓库 dailystock 的 sector/data/ 目录
-            return 'https://yinxuming.github.io/dailystock/sector/data/';
-        }
-        // GitHub Pages 部署：使用相对路径（部署于 /sector/ 子目录，对应 ./data/ 即 sector/data/）
-        return './data/';
+        return 'https://yinxuming.github.io/sector_analysis/data/';
     })(),
 
     // 东方财富API代理配置
@@ -58,7 +42,8 @@ const CONFIG = {
     // 预设板块同步：源码仓库地址（owner/repo），用于生成 Issue 链接
     // 用户在前端勾选了非预设板块时，可一键生成 Issue 提议新增到定时任务预设板块
     // 权限控制：任何用户可提交 Issue，仅协作者可添加 sync-sectors 标签审批触发同步
-    syncSectorsRepo: 'yinxuming/dailystock_full',
+    // TODO5.3：独立部署项目为配置管理入口，Issue 指向独立项目仓库（其自身有 sync 工作流）
+    syncSectorsRepo: 'yinxuming/sector_analysis',
     // 颜色配置
     colors: {
         inflow: '#f85149',       // 红色-净流入

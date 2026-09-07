@@ -92,6 +92,10 @@
 
     async function init() {
         bindEvents();
+        // 恢复二级tab选中态（板块资金 / 关注板块管理，默认板块资金）
+        let savedTab = 'fund';
+        try { savedTab = localStorage.getItem(SUBTAB_KEY) || 'fund'; } catch (e) { /* 忽略 */ }
+        switchSubTab(savedTab);
         // 初始化日期选择器：默认为最近一个交易日（含当日如果是交易日）
         const chartType = document.getElementById('chartType').value;
         const isIntraday = chartType === 'intraday';
@@ -263,13 +267,23 @@
             document.getElementById('settingsPanel').style.display = 'none';
         });
 
-        // 板块配置面板（按钮在设置面板内，点击打开板块配置并关闭设置面板）
+        // 二级tab切换（板块资金 / 关注板块管理，状态持久化）
+        document.getElementById('subtabBar').addEventListener('click', function(e) {
+            const btn = e.target.closest('[data-subtab]');
+            if (btn) switchSubTab(btn.dataset.subtab);
+        });
+
+        // 设置面板内"板块配置"入口：切换到关注板块管理tab
         document.getElementById('btnConfig').addEventListener('click', function() {
             document.getElementById('settingsPanel').style.display = 'none';
-            toggleConfigPanel();
+            renderSectorCheckboxes();
+            switchSubTab('watch');
         });
+        // 关注板块管理"返回板块资金"：应用选择并刷新数据
         document.getElementById('btnCloseConfig').addEventListener('click', function() {
-            document.getElementById('configPanel').style.display = 'none';
+            applySectorSelection();
+            loadData();
+            switchSubTab('fund');
         });
         document.getElementById('btnSelectAll').addEventListener('click', function() {
             setAllCheckboxes(true);
@@ -390,19 +404,27 @@
         }
     }
 
+    // 二级tab状态持久化key（板块资金 / 关注板块管理）
+    const SUBTAB_KEY = 'sector_active_subtab';
+
     /**
-     * 切换板块配置面板显示
+     * 切换二级tab（TODO5.3：板块资金 / 关注板块管理），状态持久化
+     * 切回板块资金时触发resize，修正隐藏期间初始化的图表尺寸
+     * @param {string} tab 'fund' / 'watch'
      */
-    function toggleConfigPanel() {
-        const panel = document.getElementById('configPanel');
-        if (panel.style.display === 'none') {
-            panel.style.display = 'block';
-            renderSectorCheckboxes();
-        } else {
-            panel.style.display = 'none';
-            // 关闭时应用选择
-            applySectorSelection();
-            loadData();
+    function switchSubTab(tab) {
+        const fund = document.getElementById('subtabFund');
+        const watch = document.getElementById('subtabWatch');
+        if (!fund || !watch) return;
+        const isWatch = tab === 'watch';
+        fund.style.display = isWatch ? 'none' : '';
+        watch.style.display = isWatch ? '' : 'none';
+        document.querySelectorAll('#subtabBar [data-subtab]').forEach(b => {
+            b.classList.toggle('active', b.dataset.subtab === (isWatch ? 'watch' : 'fund'));
+        });
+        try { localStorage.setItem(SUBTAB_KEY, isWatch ? 'watch' : 'fund'); } catch (e) { /* 忽略 */ }
+        if (!isWatch) {
+            window.dispatchEvent(new Event('resize'));
         }
     }
 

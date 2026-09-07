@@ -224,7 +224,7 @@ const FupanCharts = (function () {
             if (v === null || isNaN(v)) return;
             const x = padL + slot * i + (slot - barW) / 2;
             const y = v >= 0 ? yAt(v) : zeroY;
-            const h = Math.max(1, abs(zeroY - yAt(v)));
+            const h = Math.max(1, Math.abs(zeroY - yAt(v)));
             const color = hasNeg ? (v >= 0 ? C.up : C.down) : (opts.color || C.blue);
             const bar = el('rect', { x: x.toFixed(1), y: y.toFixed(1), width: barW.toFixed(1), height: h.toFixed(1), fill: color, rx: 1.5 });
             const title = el('title', {});

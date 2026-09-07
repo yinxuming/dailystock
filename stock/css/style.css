@@ -1661,3 +1661,356 @@ body.embedded .app-layout {
         padding: 16px;
     }
 }
+
+/* ===== 复盘优化v2（TODO5：板块工具栏/轮动矩阵/涨跌停分类栏/梯队v2/表头排序/回测） ===== */
+
+/* 榜单工具行（视图切换按钮 + 复选框/数字输入） */
+.fp-board-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+}
+
+.fp-board-toolbar .fp-board-switch {
+    margin-bottom: 0;
+}
+
+.fp-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    color: #94a3b8;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.fp-check input[type="checkbox"] {
+    accent-color: #3b82f6;
+    cursor: pointer;
+}
+
+.fp-check input[type="number"] {
+    width: 52px;
+    padding: 3px 6px;
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 5px;
+    color: #e2e8f0;
+    font-size: 12px;
+}
+
+/* 表头点击排序指示 */
+.th-sortable {
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+}
+
+.th-sortable:hover {
+    color: #bfdbfe;
+}
+
+.th-sortable.th-desc::after {
+    content: ' \25BC';
+    font-size: 9px;
+    color: #3b82f6;
+}
+
+.th-sortable.th-asc::after {
+    content: ' \25B2';
+    font-size: 9px;
+    color: #3b82f6;
+}
+
+/* 近10日轮动矩阵：列=交易日，上段涨幅榜/下段跌幅榜，格子背景=板块身份固定色 */
+.fp-rot-wrap {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    padding: 14px;
+    overflow-x: auto;
+}
+
+.fp-rot-grid {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(96px, 1fr);
+    gap: 6px;
+    min-width: max-content;
+}
+
+.fp-rot-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.fp-rot-date {
+    text-align: center;
+    font-size: 11px;
+    font-weight: 600;
+    color: #94a3b8;
+    padding: 2px 0;
+}
+
+.fp-rot-cell {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px;
+    padding: 4px 7px;
+    border-radius: 5px;
+    min-height: 24px;
+    cursor: default;
+}
+
+.fp-rot-name {
+    font-size: 11px;
+    color: #e2e8f0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fp-rot-chg {
+    font-size: 10px;
+    font-weight: 600;
+    flex-shrink: 0;
+}
+
+.fp-rot-up {
+    color: #ffb4b4;
+}
+
+.fp-rot-down {
+    color: #8fe3b0;
+}
+
+.fp-rot-divider {
+    text-align: center;
+    font-size: 9px;
+    color: #64748b;
+    border-top: 1px dashed #334155;
+    padding: 1px 0;
+}
+
+.fp-rot-empty {
+    background: #16213a;
+    color: #475569;
+    justify-content: center;
+    font-size: 10px;
+}
+
+/* 涨跌停分板块布局：左分类栏 + 右列表 */
+.fp-zt-split {
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+}
+
+.fp-cat-bar {
+    flex: 0 0 250px;
+    position: sticky;
+    top: 8px;
+}
+
+.fp-cat-bar .table-wrapper {
+    max-height: 520px;
+    overflow-y: auto;
+}
+
+.fp-cat-table th,
+.fp-cat-table td {
+    text-align: center;
+    padding: 5px 6px;
+}
+
+.fp-cat-table td.fp-cat-name {
+    text-align: left;
+    max-width: 110px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #e2e8f0;
+}
+
+.fp-cat-cell {
+    cursor: pointer;
+    font-weight: 600;
+    border-radius: 4px;
+}
+
+.fp-cat-cell:hover {
+    background: rgba(59, 130, 246, 0.15);
+}
+
+.fp-cat-cell.cell-zt {
+    color: #ef4444;
+}
+
+.fp-cat-cell.cell-dt {
+    color: #22c55e;
+}
+
+.fp-cat-cell.cell-zb {
+    color: #94a3b8;
+}
+
+.fp-cat-zero {
+    font-style: normal;
+    color: #475569;
+    font-weight: 400;
+}
+
+.fp-cat-cell-active {
+    background: rgba(59, 130, 246, 0.25);
+    outline: 1px solid #3b82f6;
+}
+
+tr.fp-cat-selected td {
+    background: rgba(59, 130, 246, 0.08);
+}
+
+tr.fp-cat-selected td.fp-cat-name {
+    color: #93c5fd;
+    font-weight: 600;
+}
+
+.fp-zt-list {
+    flex: 1;
+    min-width: 0;
+}
+
+.fp-zt-list > h4 {
+    margin-bottom: 8px;
+}
+
+/* 连板梯队v2：两行chip（第一行名称+几天几板，第二行身位/板型单字/断板标签） */
+.fp-ladder-toolbar {
+    margin-bottom: 10px;
+}
+
+.fp-ladder-chip2 {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 5px 9px;
+    background: #16213a;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    font-size: 12px;
+    color: #e2e8f0;
+    white-space: nowrap;
+}
+
+.fp-chip-l1 {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 5px;
+}
+
+.fp-chip-name {
+    font-weight: 600;
+}
+
+.fp-chip-l2 {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-height: 14px;
+}
+
+.fp-chip-dim {
+    opacity: 0.55;
+    border-style: dashed;
+}
+
+.fp-type-mini {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 0;
+}
+
+.fp-chip-broken {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 4px;
+    height: 14px;
+    border-radius: 3px;
+    background: rgba(100, 116, 139, 0.2);
+    color: #94a3b8;
+    font-size: 10px;
+    font-weight: 700;
+}
+
+.fp-chip-chg {
+    font-size: 10px;
+    font-weight: 600;
+}
+
+.fp-ladder-promo {
+    font-size: 10px;
+    margin-top: 2px;
+}
+
+/* 评分回测（近5日Top5晋级正确率对比） */
+.fp-bt-summary {
+    display: flex;
+    gap: 18px;
+    flex-wrap: wrap;
+    align-items: baseline;
+    font-size: 12px;
+    color: #94a3b8;
+    margin-bottom: 10px;
+}
+
+.fp-bt-summary b {
+    color: #e2e8f0;
+}
+
+.fp-bt-hint {
+    color: #64748b;
+    font-size: 11px;
+}
+
+.fp-bt-detail {
+    max-width: 420px;
+}
+
+.fp-bt-stock {
+    display: inline-block;
+    margin: 1px 6px 1px 0;
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.fp-bt-ok {
+    color: #fca5a5;
+}
+
+.fp-bt-miss {
+    color: #94a3b8;
+}
+
+/* 窄屏：分类栏不再侧置 */
+@media (max-width: 900px) {
+    .fp-zt-split {
+        flex-direction: column;
+    }
+
+    .fp-cat-bar {
+        position: static;
+        flex: none;
+        width: 100%;
+    }
+}

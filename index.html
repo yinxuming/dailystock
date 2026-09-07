@@ -60,9 +60,10 @@
             </button>
         </aside>
 
-        <!-- 主内容区：iframe 加载子应用 -->
+        <!-- 主内容区：双iframe懒加载（板块资金⇄stock应用来回切换零重载，TODO5.3） -->
         <main class="shell-main">
-            <iframe id="appFrame" class="app-frame" src="sector/index.html" title="功能页面"></iframe>
+            <iframe id="appFrame" class="app-frame" title="stock应用页面" style="display:none"></iframe>
+            <iframe id="appFrameSector" class="app-frame" title="板块资金页面" style="display:none"></iframe>
         </main>
     </div>
 
