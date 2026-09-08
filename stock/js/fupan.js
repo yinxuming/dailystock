@@ -194,6 +194,25 @@ const Fupan = (function () {
     // ===== 手动采集入口 =====
 
     /**
+     * 强制整体刷新：重拉summary并重建日期下拉 → 加载最新交易日数据
+     * 解决根因：当日缓存（summary/当日day）只在"当天时间戳"有效，
+     * 手动采集当天新增的交易日不会让旧缓存自动失效，需此处强制重拉后才会出现新日期。
+     */
+    async function hardRefresh() {
+        hideError();
+        try {
+            // 1. 强制重拉 summary（同时更新内存+当日缓存），新采集交易日才会进入下拉
+            await FupanData.getSummary(true);
+            // 2. 重建日期下拉，选中最新交易日
+            await initDatePicker();
+            const latest = await FupanData.getLatestDate();
+            if (latest) await loadDate(latest, true);  // force 强制重拉当日day缓存
+        } catch (e) {
+            showError('刷新失败: ' + e.message);
+        }
+    }
+
+    /**
      * 手动触发私有仓库复盘采集工作流
      * 主流程：交易日+收盘判断 → 当日数据完整性判断 → PAT校验 → workflow_dispatch
      * 静态页无法无凭据触发私有仓库 Actions，需用户首次提供一次 fine-grained PAT
@@ -252,7 +271,9 @@ const Fupan = (function () {
                     body: JSON.stringify({ ref: COLLECT_REF })
                 });
             if (resp.ok) {
-                alert('已触发采集工作流。\n约 5-10 分钟采集完成后刷新本页即可看到今日复盘数据。');
+                alert('已触发采集工作流。\n约 5-10 分钟采集完成后，本页将自动刷新以显示今日复盘数据。');
+                // 立即重拉summary/日期下拉（届时新交易日才能选中）
+                hardRefresh();
                 return;
             }
             const text = await resp.text();
@@ -295,10 +316,9 @@ const Fupan = (function () {
             if (val) loadDate(val);
         });
 
-        // 刷新按钮（强制刷新当前日数据）
+        // 刷新按钮（强制刷新当日数据 + 重拉summary/日期下拉）
         document.getElementById('btnFpRefresh').addEventListener('click', () => {
-            const target = datePicker.value || currentDate;
-            if (target) loadDate(target, true);
+            hardRefresh();
         });
 
         // 手动采集按钮（触发私有仓库采集工作流：收盘后当日数据不完整时）
