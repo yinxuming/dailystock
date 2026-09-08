@@ -23,6 +23,12 @@ const Fupan = (function () {
     // 子tab记忆持久化key
     const ACTIVE_SUB_KEY = 'fupan_active_sub';
 
+    // 手动采集：私有仓库的 fupan 采集工作流（静态页无法无凭据触发，需 fine-grained PAT）
+    const COLLECT_REPO = 'yinxuming/dailystock_full';       // 私有仓库（采集逻辑所在）
+    const COLLECT_WORKFLOW = 'fupan-data.yml';              // 采集工作流文件名
+    const COLLECT_REF = 'main';                             // dispatch 分支
+    const COLLECT_TOKEN_KEY = 'fupan_collect_token';        // localStorage 存储的触发Token
+
     // 运行状态
     let initialized = false;      // 事件是否已绑定
     let loaded = false;           // 数据是否已加载（懒加载标记）
@@ -185,6 +191,83 @@ const Fupan = (function () {
         } catch (e) { /* 忽略 */ }
     }
 
+    // ===== 手动采集入口 =====
+
+    /**
+     * 手动触发私有仓库复盘采集工作流
+     * 主流程：交易日+收盘判断 → 当日数据完整性判断 → PAT校验 → workflow_dispatch
+     * 静态页无法无凭据触发私有仓库 Actions，需用户首次提供一次 fine-grained PAT
+     * （仅授权私有仓库 Actions 写权限），localStorage 持久化，失效自动清除重填。
+     */
+    async function handleManualCollect() {
+        const now = new Date();
+        const dow = now.getDay();
+        if (dow === 0 || dow === 6) {
+            alert('今日为周末，非交易日，无需采集');
+            return;
+        }
+        if (now.getHours() < 15) {
+            alert('当前未到 15:00 收盘，需收盘后复盘数据稳定方可采集');
+            return;
+        }
+        const today = now.getFullYear() + '-' +
+            String(now.getMonth() + 1).padStart(2, '0') + '-' +
+            String(now.getDate()).padStart(2, '0');
+        // 当日数据完整性判断（涨停池为空=未采集或异常）
+        let complete = false;
+        try {
+            const day = await FupanData.getDay(today);
+            complete = !!(day && day.ztpool && day.ztpool.length);
+        } catch (e) { complete = false; }
+        if (complete) {
+            alert('今日（' + today + '）复盘数据已完整，无需重复采集。\n（定时工作流已自动跳过完整历史）');
+            return;
+        }
+        // PAT 获取/持久化
+        let token = '';
+        try { token = localStorage.getItem(COLLECT_TOKEN_KEY) || ''; } catch (e) { token = ''; }
+        if (!token) {
+            const input = window.prompt(
+                '未配置手动触发 Token。\n\n' +
+                '静态页需凭 GitHub fine-grained PAT 才能调用私有仓库工作流。\n' +
+                '请在 GitHub → Settings → Developer settings → Fine-grained tokens 创建：\n' +
+                '· 仅授权仓库 ' + COLLECT_REPO + '\n' +
+                '· 权限勾选 Actions: Read and write\n\n' +
+                '将该 Token 粘贴到此（仅存本机浏览器 localStorage）：');
+            if (!input) return;
+            token = String(input).trim();
+            try { localStorage.setItem(COLLECT_TOKEN_KEY, token); } catch (e) { /* 忽略 */ }
+        }
+        // 触发 workflow_dispatch
+        try {
+            const resp = await fetch(
+                'https://api.github.com/repos/' + COLLECT_REPO +
+                '/actions/workflows/' + COLLECT_WORKFLOW + '/dispatches', {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/vnd.github+json',
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ ref: COLLECT_REF })
+                });
+            if (resp.ok) {
+                alert('已触发采集工作流。\n约 5-10 分钟采集完成后刷新本页即可看到今日复盘数据。');
+                return;
+            }
+            const text = await resp.text();
+            if (resp.status === 401 || resp.status === 403 || resp.status === 404) {
+                try { localStorage.removeItem(COLLECT_TOKEN_KEY); } catch (e) { /* 忽略 */ }
+                alert('Token 无效或无权限（HTTP ' + resp.status + '）：' + text +
+                    '\n已清除，请重新填写正确的 PAT。');
+            } else {
+                alert('触发失败（HTTP ' + resp.status + '）：' + text);
+            }
+        } catch (e) {
+            alert('触发失败：' + e.message + '\n可到私有仓库 GitHub Actions 页面手动运行 fupan-data 工作流。');
+        }
+    }
+
     // ===== 事件绑定与入口 =====
 
     /**
@@ -216,6 +299,11 @@ const Fupan = (function () {
         document.getElementById('btnFpRefresh').addEventListener('click', () => {
             const target = datePicker.value || currentDate;
             if (target) loadDate(target, true);
+        });
+
+        // 手动采集按钮（触发私有仓库采集工作流：收盘后当日数据不完整时）
+        document.getElementById('btnFpCollect').addEventListener('click', () => {
+            handleManualCollect();
         });
 
         // 重试按钮

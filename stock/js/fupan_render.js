@@ -43,6 +43,31 @@ const FupanRenderer = (function () {
         sentiment: '情绪'
     };
 
+    // ===== 涨跌停池：子行业 → 大板块归并（参照同花顺涨停池口径） =====
+    // 东财涨跌停池的 industry 为细分子行业（如"饲料/养殖业/出版"），分类栏据此
+    // 归并成大板块，减少碎片、对齐同花顺"多概念合并成一个板块"的展示方式。
+    // 键=大板块名，值=匹配的子行业关键词（对 industry 做 includes 匹配，兼容"IT服务Ⅱ"等）。
+    const INDUSTRY_TO_SECTOR = {
+        '科技成长': ['半导体', '元件', '光电子', '电子', '通信设备', '通信服务', '软件开发', 'IT服务',
+            '计算机', '互联网', '游戏', '传媒', '影视', '出版', '广告', '软件', '数据处理', '云计算', '人工智能'],
+        '高端制造': ['专用设备', '通用设备', '自动化', '机器人', '工程机械', '仪器仪表', '轨交', '电机', '电源设备',
+            '电网设备', '光伏设备', '风电设备', '电池', '新能源', '汽车零部', '汽车整车', '商用车', '摩托车',
+            '汽车服务', '航天', '航空装备', '军工', '地面兵装', '航海装备', '船舶'],
+        '大消费': ['食品加工', '白酒', '乳品', '调味发酵', '休闲食品', '软饮料', '食品', '一般零售', '专业连锁',
+            '贸易', '电商', '旅游', '酒店餐饮', '免税', '医美', '服装', '纺织', '饰品', '文娱用品', '轻工',
+            '造纸', '包装印刷', '小家电', '厨卫', '家电', '照明', '零售', '消费'],
+        '医药生物': ['医药', '医疗', '生物制品', '化学制药', '中药', '原料药', '制药', '动物保健'],
+        '农林牧渔': ['养殖', '饲料', '种植', '渔业', '林业', '农产品', '农业', '种业', '种子', '宠物', '畜禽'],
+        '周期资源': ['化学制品', '化学原料', '化学纤维', '塑料', '橡胶', '农化', '油气', '石油', '炼化', '钢铁',
+            '煤炭', '焦炭', '金属', '有色', '钢铁', '水泥', '玻璃', '建材', '材料', '化工', '资源', '采矿', '矿'],
+        '金融地产': ['银行', '证券', '保险', '多元金融', '期货', '互联网金融', '房地产', '地产', '房产'],
+        '公用环保': ['电力', '燃气', '环保', '水务', '公用', '环境', '供热', '水利'],
+        '交通运输': ['航运', '港口', '铁路', '公路', '机场', '物流', '公交', '快递', '运输', '交通', '陆运'],
+        '建筑工程': ['基础建设', '专业工程', '工程咨询', '工程', '建筑', '房屋建设', '装修', '园林', '地下管线']
+    };
+    // 大板块兜底名（未匹配到任何子行业关键词的个股归入）
+    const SECTOR_DEFAULT = '其他';
+
     // ===== 通用小工具 =====
 
     /**
@@ -54,6 +79,43 @@ const FupanRenderer = (function () {
         return String(v === null || v === undefined ? '' : v)
             .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    /**
+     * 生成股票名称超链接（跳转同花顺个股页）
+     * @param {string} code 股票代码（如 300010）
+     * @param {string} name 股票名称
+     * @returns {string} 链接HTML
+     */
+    function stockLink(code, name) {
+        const c = String(code || '');
+        if (!c) return esc(name);
+        return `<a class="fp-stock-link" href="https://stockpage.10jqka.com.cn/${esc(c)}/" target="_blank" rel="noopener">${esc(name)}</a>`;
+    }
+
+    /**
+     * 子行业 → 大板块归并（涨停池分类栏口径，参照同花顺涨停池）
+     * @param {string} industry 东财细分子行业名（如"饲料"）
+     * @returns {string} 大板块名（未匹配到任一关键词归入"其他"）
+     */
+    function bigSectorOf(industry) {
+        const ind = String(industry || '').trim();
+        if (!ind) return SECTOR_DEFAULT;
+        for (const [sector, keys] of Object.entries(INDUSTRY_TO_SECTOR)) {
+            for (const k of keys) {
+                if (ind.includes(k)) return sector;
+            }
+        }
+        return SECTOR_DEFAULT;
+    }
+
+    /**
+     * 个股 → 大板块归并（涨停池条目分类用）
+     * @param {Object} s 池条目（含 industry 字段）
+     * @returns {string} 大板块名
+     */
+    function stockSector(s) {
+        return bigSectorOf(s && s.industry);
     }
 
     /**
@@ -240,17 +302,18 @@ const FupanRenderer = (function () {
         const prevAllA = prevMarket.allA || {};
 
         // 1. 指数卡片行：中证全A置顶，全部可点击跳转东财分时页
+        // 每个指数都显示较上一交易日的成交额差额（amount字段单位=元，换算成亿，红涨绿跌）
         const indices = (m.indices || []).slice()
             .sort((a, b) => (b.code === '000985') - (a.code === '000985'));
-        // 全A指数成交额环比（较上一交易日增量，红涨绿跌）
-        const qa = indices.find(i => i.code === '000985') || {};
-        const prevQa = ((prevMarket.indices || []).find(i => i.code === '000985')) || {};
+        const prevIndices = (prevMarket.indices || []);
         let indicesHtml = '<div class="fp-index-row">';
         indices.forEach(idx => {
             const cls = FupanData.changeClass(idx.change);
+            const prevIdx = prevIndices.find(i => i.code === idx.code) || {};
             let amountDelta = '';
-            if (idx.code === '000985' && qa.amount != null && prevQa.amount != null) {
-                amountDelta = deltaLine(qa.amount, prevQa.amount, '亿', 1);
+            if (idx.amount != null && prevIdx.amount != null) {
+                // 元 -> 亿（÷1e8）后再算差额，避免负值单位错乱（如 -98781404974.0亿）
+                amountDelta = deltaLine(idx.amount / 1e8, prevIdx.amount / 1e8, '亿', 2);
             }
             indicesHtml += `
                 <div class="fp-index-card" data-fp-index="${esc(idx.code)}" title="点击查看分时行情" role="button">
@@ -426,7 +489,11 @@ const FupanRenderer = (function () {
             const mFocusNow = FupanData.getSetting(MATRIX_FOCUS_KEY, false);
             try {
                 const dates = await FupanData.getRecentDates(dateStr, 10);
-                const daysData = await Promise.all(dates.map(d => FupanData.getDay(d)));
+                // 当日无缓存文件的返回null，矩阵对应列留空，绝不拿其他日期的数据顶替（保证数据正确性）
+                const daysData = await Promise.all(dates.map(async d => {
+                    try { return await FupanData.getDay(d); }
+                    catch (e) { return null; }
+                }));
                 buildMatrix(matrixWrap, dates, daysData, n, mFocusNow);
             } catch (e) {
                 matrixWrap.innerHTML = `<div class="error"><span>矩阵加载失败: ${esc(e.message)}</span></div>`;
@@ -588,8 +655,11 @@ const FupanRenderer = (function () {
     function sectorColor(name) {
         let h = 0;
         const s = String(name);
-        for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360;
-        return `hsl(${h}, 42%, 30%)`;
+        for (let i = 0; i < s.length; i++) h = (h * 33 + s.charCodeAt(i)) >>> 0;
+        // 黄金角（137.508°）散开色相，相邻板块色相差距最大化，避免“半导体设备/农林牧渔”等颜色过近
+        const hue = (h * 137.508) % 360;
+        const light = 26 + (h % 3) * 7;
+        return `hsl(${hue.toFixed(0)}, 48%, ${light}%)`;
     }
 
     /**
@@ -749,9 +819,9 @@ const FupanRenderer = (function () {
     }
 
     /**
-     * 按行业聚合三类池数量（分类栏数据源）
+     * 按大板块聚合三类池数量（分类栏数据源，子行业归并成大板块）
      * @param {Object} day 单日复盘数据
-     * @returns {Map<string, {zt:number, dt:number, zb:number}>} 行业 -> 数量（'__all__'=全部合计）
+     * @returns {Map<string, {zt:number, dt:number, zb:number}>} 大板块 -> 数量（'__all__'=全部合计）
      */
     function buildCatStats(day) {
         const stats = new Map();
@@ -759,9 +829,9 @@ const FupanRenderer = (function () {
             if (!stats.has(ind)) stats.set(ind, { zt: 0, dt: 0, zb: 0 });
             return stats.get(ind);
         };
-        (day.ztpool || []).forEach(s => ensure(s.industry || '其他').zt++);
-        (day.dtpool || []).forEach(s => ensure(s.industry || '其他').dt++);
-        (day.zbpool || []).forEach(s => ensure(s.industry || '其他').zb++);
+        (day.ztpool || []).forEach(s => ensure(stockSector(s)).zt++);
+        (day.dtpool || []).forEach(s => ensure(stockSector(s)).dt++);
+        (day.zbpool || []).forEach(s => ensure(stockSector(s)).zb++);
         return stats;
     }
 
@@ -850,7 +920,7 @@ const FupanRenderer = (function () {
         const poolNames = { zt: '涨停池', dt: '跌停池', zb: '炸板池' };
         const poolKeys = { zt: 'ztpool', dt: 'dtpool', zb: 'zbpool' };
         let rows = (day[poolKeys[pool]] || []).slice();
-        if (cat !== '__all__') rows = rows.filter(s => (s.industry || '其他') === cat);
+        if (cat !== '__all__') rows = rows.filter(s => stockSector(s) === cat);
         rows = sortPoolRows(rows, pool);
         const catLabel = cat === '__all__' ? '全部' : cat;
         const table = pool === 'zt' ? ztPoolTable(rows) : (pool === 'dt' ? dtPoolTable(rows) : zbPoolTable(rows));
@@ -881,7 +951,7 @@ const FupanRenderer = (function () {
         const rows = pool.map((s, i) => `
             <tr>
                 <td class="col-rank" data-v="${i + 1}">${i + 1}</td>
-                <td class="col-name">${esc(s.name)}</td>
+                <td class="col-name">${stockLink(s.code, s.name)}</td>
                 <td class="col-code">${esc(s.code)}</td>
                 <td data-v="${s.price ?? ''}">${s.price !== null && s.price !== undefined ? s.price.toFixed(2) : '--'}</td>
                 <td class="${FupanData.changeClass(s.change)}" data-v="${s.change ?? ''}">${FupanData.formatChange(s.change)}%</td>
@@ -921,7 +991,7 @@ const FupanRenderer = (function () {
         const rows = pool.map((s, i) => `
             <tr>
                 <td class="col-rank" data-v="${i + 1}">${i + 1}</td>
-                <td class="col-name">${esc(s.name)}</td>
+                <td class="col-name">${stockLink(s.code, s.name)}</td>
                 <td class="col-code">${esc(s.code)}</td>
                 <td data-v="${s.price ?? ''}">${s.price !== null && s.price !== undefined ? s.price.toFixed(2) : '--'}</td>
                 <td class="${FupanData.changeClass(s.change)}" data-v="${s.change ?? ''}">${FupanData.formatChange(s.change)}%</td>
@@ -958,7 +1028,7 @@ const FupanRenderer = (function () {
             return `
             <tr>
                 <td class="col-rank" data-v="${i + 1}">${i + 1}</td>
-                <td class="col-name">${esc(s.name)}</td>
+                <td class="col-name">${stockLink(s.code, s.name)}</td>
                 <td class="col-code">${esc(s.code)}</td>
                 <td data-v="${s.price ?? ''}">${s.price !== null && s.price !== undefined ? s.price.toFixed(2) : '--'}</td>
                 <td class="${FupanData.changeClass(s.change)}" data-v="${s.change ?? ''}">${FupanData.formatChange(s.change)}%</td>
@@ -1071,7 +1141,7 @@ const FupanRenderer = (function () {
      */
     function ladderChip(s, roleOn, typeOn, isFailed, changeByCode) {
         const title = `${s.name} ${s.industry || ''} 首封${s.firstSealTime || '--'} 封单${FupanData.formatAmount(s.sealFund)}${isFailed ? '（昨日涨停今日未晋级）' : ''}`;
-        const l1 = `<span class="fp-chip-l1"><b class="fp-chip-name">${esc(s.name)}</b><i class="fp-chip-stats">${esc(s.stats || '')}</i></span>`;
+        const l1 = `<span class="fp-chip-l1"><b class="fp-chip-name">${stockLink(s.code, s.name)}</b><i class="fp-chip-stats">${esc(s.stats || '')}</i></span>`;
         let l2 = '';
         if (isFailed) {
             l2 += '<span class="fp-chip-broken" title="昨日涨停今日未晋级">断</span>';
@@ -1193,7 +1263,7 @@ const FupanRenderer = (function () {
         const allScores = scores.all || [];
         const allRows = allScores.map(s => `
             <tr>
-                <td>${esc(s.name)}</td>
+                <td>${stockLink(s.code, s.name)}</td>
                 <td class="col-code">${esc(s.code)}</td>
                 <td class="fp-score-total ${scoreClass(s.score)}">${s.score ?? '--'}</td>
                 <td>${s.probability !== null && s.probability !== undefined ? (s.probability * 100).toFixed(1) + '%' : '--'}</td>
@@ -1499,7 +1569,7 @@ const FupanRenderer = (function () {
             <div class="fp-top5-card">
                 <div class="fp-top5-head">
                     <span class="fp-top5-rank">#${idx + 1}</span>
-                    <span class="fp-top5-name">${esc(s.name)}</span>
+                    <span class="fp-top5-name">${stockLink(s.code, s.name)}</span>
                     <span class="col-code">${esc(s.code)}</span>
                     <span class="fp-lb">${s.lbCount ?? '--'}板</span>
                 </div>

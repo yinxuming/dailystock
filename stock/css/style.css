@@ -12,6 +12,40 @@ body {
     min-height: 100vh;
 }
 
+/* ===== 暗色滚动条（全局，替换默认白底灰条） ===== */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: #475569 #0f172a;
+}
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+::-webkit-scrollbar-track {
+    background: #0f172a;
+}
+::-webkit-scrollbar-thumb {
+    background: #475569;
+    border-radius: 5px;
+    border: 2px solid #0f172a;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #64748b;
+}
+::-webkit-scrollbar-corner {
+    background: #0f172a;
+}
+
+/* 股票名称超链接（同花顺个股页） */
+a.fp-stock-link {
+    color: #60a5fa;
+    text-decoration: none;
+    cursor: pointer;
+}
+a.fp-stock-link:hover {
+    text-decoration: underline;
+}
+
 /* ===== 整体布局：左侧菜单 + 主内容区 ===== */
 .app-layout {
     display: flex;
@@ -189,6 +223,15 @@ body.embedded .app-layout {
 
 .btn-secondary:hover {
     background: #475569;
+}
+
+.btn-accent {
+    background: #0d9488;
+    color: #fff;
+}
+
+.btn-accent:hover {
+    background: #0f766e;
 }
 
 .btn-sm {
@@ -1261,7 +1304,20 @@ body.embedded .app-layout {
     display: flex;
     align-items: center;
     gap: 8px;
+    flex-wrap: wrap;      /* 空间不足时换行，避免代码/板数文字重叠 */
+    row-gap: 2px;
     margin-bottom: 8px;
+}
+
+/* top5卡片内覆盖表格列的 .col-code{width:7%}，恢复自然宽度避免挤压重叠 */
+.fp-top5-head .col-code {
+    width: auto;
+    flex: none;
+}
+
+.fp-top5-head .fp-lb {
+    flex: none;
+    margin-left: auto;    /* 板数靠右显示，与代码保持间距 */
 }
 
 .fp-top5-rank {
