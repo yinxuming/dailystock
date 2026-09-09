@@ -11,11 +11,14 @@
  *
  * K线本地缓存（localStorage）：
  * - 历史K线长期保留，跨天只增量补拉尾部（按日期合并，同日新数据覆盖旧数据）
+ * - 收盘定型复用：最近交易日已收盘且缓存拉取于该收盘之后（closeStamp标记），
+ *   收盘K线不会再变化，直接复用缓存不再请求（不受4小时TTL限制）
  * - LRU容量淘汰（默认500只，设置页可配），自选移除联动清理
  * - 市场行情N个交易日（默认5）未出现的股票淘汰缓存，自选股保护除外
  *
  * 请求方式：所有请求走代理（主代理 → 备用代理自动切换）
  * 识别结果缓存：当日生效，点击刷新可清空缓存强制刷新
+ * 股票搜索：东财suggest接口（轻量实时，名称/拼音/代码模糊），全量列表仅作降级备用
  */
 const StockAPI = (function () {
 
@@ -38,6 +41,9 @@ const StockAPI = (function () {
     // 同花顺涨停原因接口
     const THS_ZTPOOL_BASE = 'https://data.10jqka.com.cn/dataapi/limit_up/limit_up_pool';
 
+    // 东财suggest搜索接口（股票搜索下拉用，轻量实时，支持名称/拼音首字母/代码模糊匹配）
+    const SUGGEST_BASE = 'https://searchapi.eastmoney.com/api/suggest/get';
+
     // ===== 代理配置 =====
     const PROXY_CONFIG = {
         primaryUrl: 'https://vercel-proxy-p.vercel.app',
@@ -59,7 +65,7 @@ const StockAPI = (function () {
     const RESULT_CACHE_KEY = 'unusual_result';        // 识别结果缓存key
     const KLINE_INDEX_KEY = 'unusual_kline_index';    // K线LRU索引 {secid: {la:最后访问时间, ls:最后出现在市场行情的日期}}
     const CACHE_CONFIG_KEY = 'unusual_cache_config';  // 缓存配置 {capacity:容量(只), marketKeepDays:市场股票保留交易日数}
-    const CACHE_TTL = 4 * 60 * 60 * 1000;             // 结果缓存/K线新鲜度4小时（覆盖整个交易时段）
+    const CACHE_TTL = 4 * 60 * 60 * 1000;             // 盘中K线新鲜度4小时（收盘后由closeStamp定型复用接管，见fetchKlineCached）
     const DEFAULT_CACHE_CONFIG = { capacity: 500, marketKeepDays: 5 };
 
     // ===== 运行状态（缓存，惰性加载） =====
@@ -279,6 +285,15 @@ const StockAPI = (function () {
     }
 
     /**
+     * 仅清除识别结果缓存（自定义监控股增删后调用，强制下次重算；K线缓存保留不重复拉取）
+     */
+    function clearResultCache() {
+        try {
+            localStorage.removeItem(RESULT_CACHE_KEY);
+        } catch (e) { /* 忽略 */ }
+    }
+
+    /**
      * 清除所有缓存（K线缓存 + 指数缓存 + LRU索引 + 结果缓存）
      * 点击刷新时调用
      */
@@ -346,6 +361,46 @@ const StockAPI = (function () {
     function todayStr() {
         const d = new Date();
         return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    }
+
+    /**
+     * 计算当前时刻"已收盘定型"的最近交易日（K线收盘定型复用判断依据，参考tradingCalendar交易日判断）
+     * A股交易时间：9:30-11:30, 13:00-15:00
+     * - 交易日15:00后 → 当日（当日收盘K线已定型）
+     * - 非交易日（周末/节假日）→ 最近一个已过去的交易日（其收盘数据早已定型）
+     * - 交易日盘前/盘中 → null（当日数据尚未定型，新旧数据都可能变化）
+     * TradingCalendar不可用时按周一~周五兜底（节假日误判只会多拉一次数据，不影响正确性）
+     * @returns {string|null} YYYY-MM-DD 或 null
+     */
+    function closedTradeDateNow() {
+        try {
+            const now = new Date();
+            let isTradeDay = true;
+            if (typeof TradingCalendar !== 'undefined' && TradingCalendar.isTradingDay) {
+                isTradeDay = TradingCalendar.isTradingDay(now);
+            } else {
+                const dow = now.getDay();
+                isTradeDay = dow !== 0 && dow !== 6;
+            }
+
+            if (!isTradeDay) {
+                // 非交易日：最近一个交易日已收盘定型
+                if (typeof TradingCalendar !== 'undefined' && TradingCalendar.getLatestTradeDate) {
+                    return TradingCalendar.getLatestTradeDate();
+                }
+                return null; // 无交易日历时保守返回null（走原TTL逻辑）
+            }
+
+            if (now.getHours() * 60 + now.getMinutes() >= 15 * 60) {
+                // 交易日15:00收盘后：当日定型
+                return typeof TradingCalendar !== 'undefined' && TradingCalendar.formatDate
+                    ? TradingCalendar.formatDate(now)
+                    : todayStr();
+            }
+            return null; // 交易日盘前/盘中
+        } catch (e) {
+            return null;
+        }
     }
 
     /** 读取缓存配置（含localStorage持久化，惰性加载） */
@@ -557,7 +612,10 @@ const StockAPI = (function () {
             data: klines,
             timestamp: Date.now(),
             limit: limit || 40,
-            lastFetchDate: todayStr()
+            lastFetchDate: todayStr(),
+            // 收盘定型标记：本次拉取发生在"最近交易日收盘后"时记录该交易日，
+            // 之后收盘K线不再变化，读取方可直接复用不再请求（fetchKlineCached）
+            closeStamp: closedTradeDateNow()
         };
         try {
             localStorage.setItem(key, JSON.stringify(entry));
@@ -815,9 +873,10 @@ const StockAPI = (function () {
     /**
      * 带缓存的K线获取（历史K线本地长期保留，跨天只增量补拉尾部）
      * 主流程：
-     * 1. 缓存当日已拉取且条数覆盖需求 → 直接返回（零请求）
-     * 2. 有缓存但过期/跨天/条数不足 → 增量拉取（少量K线）按日期合并，同日新数据覆盖旧数据
-     * 3. 无缓存 → 平台轮询全量拉取，失败自动切换另一平台
+     * 1. 收盘定型复用：最近交易日已收盘且缓存拉取于该收盘后（closeStamp一致）→ 直接返回（零请求，不受TTL限制）
+     * 2. 交易日盘前/盘中：当日已拉取且4小时TTL内且条数覆盖需求 → 直接返回（零请求）
+     * 3. 有缓存但过期/跨天/条数不足/缺收盘定型数据 → 增量拉取（少量K线）按日期合并，同日新数据覆盖旧数据
+     * 4. 无缓存 → 平台轮询全量拉取，失败自动切换另一平台
      * @param {string} cacheKey - 完整缓存key（含前缀）
      * @param {string} secid - 股票/指数ID
      * @param {number} limit - 需要的K线数量
@@ -833,8 +892,16 @@ const StockAPI = (function () {
             const data = entry.data;
             // 覆盖判断：请求limit已满足，或实际条数已达缓存时请求limit（新股/停牌已取到全部数据）
             const coversLimit = !limit || entry.limit >= limit || data.length >= limit;
-            const isFresh = entry.lastFetchDate === today && (Date.now() - entry.timestamp) < CACHE_TTL;
-            if (isFresh && coversLimit) {
+            const closedNow = closedTradeDateNow();
+
+            if (closedNow !== null) {
+                // 收盘后：缓存拉取于该收盘之后（closeStamp一致）→ 收盘K线已定型，直接复用不再请求
+                if (coversLimit && entry.closeStamp === closedNow) {
+                    return data;
+                }
+                // 收盘后但缓存缺收盘定型数据（盘中拉取的旧缓存）→ 跳过TTL新鲜判断，增量补拉收盘数据
+            } else if (entry.lastFetchDate === today && (Date.now() - entry.timestamp) < CACHE_TTL && coversLimit) {
+                // 交易日盘前/盘中：当日TTL内缓存直接复用
                 return data;
             }
 
@@ -1073,7 +1140,8 @@ const StockAPI = (function () {
     }
 
     /**
-     * 获取全A股列表（用于自选股搜索，含北交所，当日缓存）
+     * 获取全A股列表（用于搜索降级备用，含北交所，当日缓存）
+     * 逐页请求+失败重试：东财对连续高频请求会异常断开连接，单页失败重试避免整体报废
      * @param {Function} onProgress - 进度回调 (loadedPages)
      * @returns {Promise<Array>} [{code, market, name}]
      */
@@ -1096,7 +1164,23 @@ const StockAPI = (function () {
                 '&fields=f12,f13,f14' +
                 '&_t=' + Date.now();
 
-            const data = await request(url);
+            // 单页重试：东财偶发异常断开连接（connection closed），重试2次
+            let data = null;
+            let lastError = null;
+            for (let attempt = 0; attempt < 3; attempt++) {
+                try {
+                    data = await request(url);
+                    lastError = null;
+                    break;
+                } catch (e) {
+                    lastError = e;
+                    console.warn(`全A股列表第${page}页请求失败(第${attempt + 1}次):`, e.message);
+                }
+            }
+            if (lastError) {
+                throw new Error('股票列表第' + page + '页加载失败: ' + lastError.message);
+            }
+
             const diff = data && data.data && data.data.diff;
             if (!diff || diff.length === 0) break;
 
@@ -1119,6 +1203,38 @@ const StockAPI = (function () {
             console.log('全A股列表加载完成:', result.length + '只');
         }
         return result;
+    }
+
+    /**
+     * 东财suggest搜索（股票搜索主源，轻量单次请求，支持中文名称/拼音首字母/代码模糊匹配）
+     * 相比全量列表逐页下载（11+页连发易被东财断连），单次请求即完成搜索
+     * @param {string} keyword - 关键词（名称/拼音/代码）
+     * @returns {Promise<Array>} [{code, name, market, securityType}]，仅保留A股
+     */
+    async function searchStockSuggest(keyword) {
+        const kw = String(keyword || '').trim();
+        if (!kw) return [];
+
+        const url = SUGGEST_BASE +
+            '?input=' + encodeURIComponent(kw) +
+            '&type=14' +
+            '&token=D43BF722C8E33BDC906FB84D85E326E8' +
+            '&count=10' +
+            '&_t=' + Date.now();
+
+        const data = await request(url);
+        const list = data && data.QuotationCodeTable && data.QuotationCodeTable.Data;
+        if (!Array.isArray(list)) return [];
+
+        // 仅保留A股（过滤基金/债券/指数等），MktNum与secid市场编号一致（1=沪，0=深/北）
+        return list
+            .filter(item => item && item.Classify === 'AStock' && item.Code && item.QuoteID)
+            .map(item => ({
+                code: String(item.Code),
+                name: item.Name || String(item.Code),
+                market: parseInt(item.MktNum, 10),
+                securityType: item.SecurityTypeName || ''
+            }));
     }
 
     /**
@@ -1249,6 +1365,7 @@ const StockAPI = (function () {
         setProxyConfig,
         clearAllCache,
         clearKlineCache,
+        clearResultCache,
         getResultCache,
         setResultCache,
         // ===== K线缓存管理（LRU/统计/配置） =====
@@ -1261,6 +1378,7 @@ const StockAPI = (function () {
         getZTPool,
         getTHSZTReason,
         getAllStockList,
+        searchStockSuggest,
         // ===== 通用工具（复盘等模块复用） =====
         getDailyCache,
         setDailyCache,
@@ -1273,6 +1391,7 @@ const StockAPI = (function () {
             businessDaysBetween,
             evictStaleMarketStocks,
             todayStr,
+            closedTradeDateNow,
             /** 重置平台轮询游标（测试用，保证平台顺序确定） */
             resetPlatformCursor: () => { platformCursor = 0; },
             /** 重置内存中的LRU索引与缓存配置，强制从localStorage重新加载（测试用） */

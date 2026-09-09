@@ -31,6 +31,11 @@
                     <div class="header-actions">
                         <span id="dataDate" class="data-date"></span>
                         <input type="date" id="datePicker" class="date-picker" title="选择日期查看对应交易日数据">
+                        <!-- 搜索添加自定义监控股票（置顶显示，操作列可删除） -->
+                        <div class="search-box">
+                            <input type="text" id="mktSearchInput" class="search-input" placeholder="搜索添加自定义监控" autocomplete="off">
+                            <div id="mktSearchDropdown" class="search-dropdown" style="display:none;"></div>
+                        </div>
                         <button id="btnRefresh" class="btn btn-primary" title="刷新数据">刷新</button>
                     </div>
                 </header>
@@ -355,6 +360,7 @@
 
     <script src="js/api.js?v=21"></script>
     <script src="js/calculator.js?v=19"></script>
+    <script src="js/stock_search.js?v=1"></script>
     <script src="js/tradingCalendar.js?v=11"></script>
     <script src="js/renderer.js?v=19"></script>
     <script src="js/watchlist.js?v=3"></script>

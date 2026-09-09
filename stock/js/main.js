@@ -29,10 +29,14 @@ const App = (function () {
     // 左侧菜单tab持久化key
     const ACTIVE_TAB_KEY = 'unusual_active_tab';
 
+    // 自定义监控股票持久化key（异动监控页搜索添加，置顶显示，可删除）
+    const CUSTOM_MONITOR_KEY = 'unusual_custom_monitor';
+
     // 运行状态
     let config = { ...DEFAULT_CONFIG };
     let autoRefreshTimer = null;
     let isLoading = false;
+    let pendingRerun = false; // 运行中收到自定义监控增删请求时，本轮结束后补跑一次
     let selectedDate = null; // 用户选择的日期（YYYY-MM-DD），null=自动
 
     /**
@@ -63,6 +67,97 @@ const App = (function () {
         } catch (e) {
             console.warn('保存配置失败:', e);
         }
+    }
+
+    // ============================================================
+    // 自定义监控股票（异动监控页搜索添加，置顶显示，可删除）
+    // ============================================================
+
+    /**
+     * 读取自定义监控股票列表
+     * @returns {Array} [{code, name, market, addedAt}]
+     */
+    function getCustomMonitors() {
+        try {
+            const raw = localStorage.getItem(CUSTOM_MONITOR_KEY);
+            const list = raw ? JSON.parse(raw) : [];
+            return Array.isArray(list) ? list : [];
+        } catch (e) {
+            console.warn('读取自定义监控失败:', e.message);
+            return [];
+        }
+    }
+
+    /**
+     * 保存自定义监控股票列表
+     */
+    function saveCustomMonitors(list) {
+        try {
+            localStorage.setItem(CUSTOM_MONITOR_KEY, JSON.stringify(list));
+        } catch (e) {
+            console.warn('保存自定义监控失败:', e.message);
+        }
+    }
+
+    /**
+     * 添加自定义监控股票
+     * @param {string} code - 股票代码
+     * @param {string} name - 股票名称
+     * @param {number} market - 市场编号（0=深/北，1=沪）
+     */
+    function addCustomMonitor(code, name, market) {
+        if (!code || getCustomMonitors().some(s => s.code === code)) return false;
+        const list = getCustomMonitors();
+        list.push({ code: code, name: name, market: market, addedAt: Date.now() });
+        saveCustomMonitors(list);
+        // 结果缓存已过时（需包含新监控股），仅清结果缓存；K线缓存保留避免重复拉取
+        StockAPI.clearResultCache();
+        rerunAfterCustomChange();
+        return true;
+    }
+
+    /**
+     * 移除自定义监控股票（表格操作列移除按钮回调，Renderer转发）
+     * @param {string} code - 股票代码
+     */
+    function removeCustomMonitor(code) {
+        const list = getCustomMonitors();
+        const stock = list.find(s => s.code === code);
+        if (!stock) return false;
+        if (!confirm('确定移除自定义监控 ' + stock.name + '（' + code + '）？')) return false;
+        const idx = list.indexOf(stock);
+        list.splice(idx, 1);
+        saveCustomMonitors(list);
+        StockAPI.clearResultCache();
+        rerunAfterCustomChange();
+        return true;
+    }
+
+    /**
+     * 自定义监控增删后重新分析渲染（运行中则等本轮结束后补跑）
+     */
+    function rerunAfterCustomChange() {
+        if (isLoading) {
+            pendingRerun = true;
+        } else {
+            run(false);
+        }
+    }
+
+    /**
+     * 初始化市场行情页搜索框（添加自定义监控股票，共用StockSearch组件）
+     */
+    function initMarketSearch() {
+        StockSearch.create({
+            inputId: 'mktSearchInput',
+            dropdownId: 'mktSearchDropdown',
+            isExists: (code) => getCustomMonitors().some(s => s.code === code),
+            onPick: (item) => {
+                if (addCustomMonitor(item.code, item.name, item.market)) {
+                    console.log('已添加自定义监控:', item.name, item.code);
+                }
+            }
+        });
     }
 
     /**
@@ -178,48 +273,62 @@ const App = (function () {
             Renderer.showLoading('正在获取阶段涨幅排行...');
             const stocks = await StockAPI.getCandidateStocks(config.topN);
 
-            if (stocks.length === 0) {
+            // 合并自定义监控股票（已在候选中的不重复拉取，isCustom标记在结果阶段补）
+            const customs = getCustomMonitors();
+            const candidateCodes = new Set(stocks.map(s => s.code));
+            const customStocks = customs
+                .filter(s => !candidateCodes.has(s.code))
+                .map(s => ({
+                    code: s.code,
+                    name: s.name,
+                    market: s.market,
+                    secid: s.market + '.' + s.code,
+                    price: 0,
+                    changePercent: 0,
+                    gain5d: 0,
+                    source: '自定义'
+                }));
+            const allStocks = stocks.concat(customStocks);
+
+            if (allStocks.length === 0) {
                 Renderer.renderEmpty('未获取到候选股票数据，可能非交易时间');
                 return;
             }
 
-            console.log(`候选股票: ${stocks.length}只`);
+            console.log(`候选股票: ${stocks.length}只${customStocks.length > 0 ? `，自定义监控追加${customStocks.length}只` : ''}`);
 
             // 第2步：批量获取K线数据（只对候选股票请求，大幅减少请求量）
-            Renderer.showLoading('正在获取K线数据... (0/' + stocks.length + ')');
+            Renderer.showLoading('正在获取K线数据... (0/' + allStocks.length + ')');
             const klineMap = await StockAPI.batchGetKline(
-                stocks.map(s => s.secid),
+                allStocks.map(s => s.secid),
                 config.concurrency,
                 (completed, total) => Renderer.updateProgress(completed, total)
             );
 
             // 第2.5步：获取基准指数K线数据（用于偏离值计算）
             Renderer.showLoading('正在获取基准指数数据...');
-            const indexKlineMap = await StockAPI.getBenchmarkIndices(stocks, 40);
+            const indexKlineMap = await StockAPI.getBenchmarkIndices(allStocks, 40);
             console.log('基准指数获取完成:', Array.from(indexKlineMap.keys()).join(', '));
 
             // 第3步：计算异动分析（传入指数K线数据和交易日偏移量）
+            // 全量分析不做onlyRisk过滤：自定义监控股票需始终展示（下方手动过滤）
             Renderer.showLoading('正在计算异动分析...');
             let results = UnusualCalculator.analyzeStocks(
-                stocks,
+                allStocks,
                 klineMap,
                 indexKlineMap,
                 config.forwardDays,
-                config.onlyRisk,
+                false,
                 tradeDayOffset
             );
 
-            // 如果仅显示可触发风险股票且结果为空，尝试显示全部
-            if (results.length === 0 && config.onlyRisk) {
-                results = UnusualCalculator.analyzeStocks(
-                    stocks,
-                    klineMap,
-                    indexKlineMap,
-                    config.forwardDays,
-                    false,
-                    tradeDayOffset
-                );
-            }
+            // 标记自定义监控行 + 过滤（自定义始终保留，其余按onlyRisk配置保留有风险的）
+            const customCodeSet = new Set(customs.map(s => s.code));
+            results.forEach(r => { if (customCodeSet.has(r.code)) r.isCustom = true; });
+            results = results.filter(r => r.isCustom || !config.onlyRisk || r.hasAchievableRisk);
+
+            // 自定义监控置顶（sort稳定，组内保持紧急度排序）
+            results.sort((a, b) => (b.isCustom ? 1 : 0) - (a.isCustom ? 1 : 0));
 
             // 第4步：缓存识别结果
             if (results.length > 0) {
@@ -614,6 +723,7 @@ const App = (function () {
         initTabs();             // 左侧菜单tab（URL参数page优先，其次恢复上次选中tab）
         initEmbedded();         // 嵌入模式（统一外壳iframe加载时隐藏自身菜单+监听导航消息）
         initDatePicker();
+        initMarketSearch();    // 市场行情页搜索添加自定义监控股票
         initSettingsUI();       // 设置页为常驻页面，初始化时同步当前配置值
         initSettingsTabs();     // 设置页二级tab（监控参数/数据缓存/网络代理）
         bindEvents();

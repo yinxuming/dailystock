@@ -322,10 +322,16 @@ const Renderer = (function () {
                 tdRank.textContent = index + 1;
                 tr.appendChild(tdRank);
 
-                // 名称（带板块颜色）
+                // 名称（带板块颜色，自定义监控行追加标记）
                 const tdName = document.createElement('td');
                 tdName.className = 'col-name' + (boardClass ? ' ' + boardClass : '');
                 tdName.textContent = result.name;
+                if (result.isCustom) {
+                    const customTag = document.createElement('span');
+                    customTag.className = 'tag-badge tag-badge-custom';
+                    customTag.textContent = '自定义';
+                    tdName.appendChild(customTag);
+                }
                 tr.appendChild(tdName);
 
                 // 代码（带东方财富超链接）
@@ -404,16 +410,20 @@ const Renderer = (function () {
                     tr.appendChild(td);
                 }
 
-                // 操作列（自选页：移除按钮）
-                if (options.onRemove) {
+                // 操作列
+                // - onRemove（自选页）：每行显示移除按钮
+                // - onCustomRemove（市场行情页）：仅自定义监控行（result.isCustom）显示移除按钮
+                if (options.onRemove || options.onCustomRemove) {
                     const tdOp = document.createElement('td');
                     tdOp.className = 'col-op';
-                    const btnRemove = document.createElement('button');
-                    btnRemove.className = 'btn btn-secondary btn-sm';
-                    btnRemove.textContent = '移除';
-                    btnRemove.title = '从自选中移除';
-                    btnRemove.addEventListener('click', () => options.onRemove(result.code));
-                    tdOp.appendChild(btnRemove);
+                    if (result.isCustom && options.onCustomRemove) {
+                        const btnRemove = document.createElement('button');
+                        btnRemove.className = 'btn btn-secondary btn-sm';
+                        btnRemove.textContent = '移除';
+                        btnRemove.title = '移除自定义监控';
+                        btnRemove.addEventListener('click', () => options.onCustomRemove(result.code));
+                        tdOp.appendChild(btnRemove);
+                    }
                     tr.appendChild(tdOp);
                 }
 
@@ -437,8 +447,8 @@ const Renderer = (function () {
             elements.tableBody.innerHTML = '';
             const tr = document.createElement('tr');
             const td = document.createElement('td');
-            // 12列基础 + 操作列1列（自选页）
-            td.colSpan = options.onRemove ? 13 : 12;
+            // 12列基础 + 操作列1列（自选页onRemove / 市场行情页onCustomRemove）
+            td.colSpan = (options.onRemove || options.onCustomRemove) ? 13 : 12;
             td.style.textAlign = 'center';
             td.style.padding = '40px';
             td.style.color = '#64748b';
@@ -462,6 +472,7 @@ const Renderer = (function () {
 
     // ===================== 市场行情页默认实例 =====================
     // 沿用原有DOM元素id（无前缀），保持 main.js 中 Renderer.xxx 的旧用法不变
+    // 自定义监控行移除回调转发给App（main.js后加载，点击时才调用）
     const marketRenderer = createTableRenderer({
         tableBody: 'stockTableBody',
         loading: 'loading',
@@ -474,6 +485,12 @@ const Renderer = (function () {
         countTotal: 'countTotal',
         tableSection: 'tableSection',
         table: 'stockTable'
+    }, {
+        onCustomRemove: (code) => {
+            if (typeof App !== 'undefined' && App.removeCustomMonitor) {
+                App.removeCustomMonitor(code);
+            }
+        }
     });
 
     // 模块公开接口：默认实例方法 + 工厂函数（自选页用）+ 共享工具函数

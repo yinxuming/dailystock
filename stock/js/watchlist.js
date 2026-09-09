@@ -5,7 +5,7 @@
  * 1. 自选股CRUD：localStorage持久化（代码/名称/市场/备注/添加时间）
  * 2. CSV导入：兼容GBK/UTF-8编码，代码格式兼容 SZ000017 / 000017 / 000017.SZ
  * 3. CSV导出：UTF-8带BOM（Excel兼容），列：名称,代码,备注
- * 4. 搜索添加：输入名称或代码，从全A股列表（含北交所）模糊匹配下拉选择
+ * 4. 搜索添加：共用组件StockSearch（suggest接口实时搜索名称/拼音/代码，全量列表降级，见stock_search.js）
  * 5. 二级菜单：异动风险视图（默认）/ 普通浏览视图，切换状态记忆
  *    - 异动风险视图：复用UnusualCalculator计算100/200异动触发值（与市场行情页同算法）
  *    - 普通浏览视图：行情快照+阶段涨幅+涨停信息（详见renderBrowseTable），27列全部支持点击表头排序
@@ -24,15 +24,12 @@ const Watchlist = (function () {
     const SUBTAB_KEY = 'unusual_wl_subtab';    // 二级菜单记忆key
     const FORWARD_DAYS = 4;                    // 异动风险视图提前天数（T+0~T+3，与市场行情页一致）
     const BROWSE_KLINE_LIMIT = 260;            // 浏览视图K线数量（覆盖今年来涨幅计算）
-    const SEARCH_LIMIT = 20;                   // 搜索下拉最大条数
 
     // ===== 运行状态 =====
     let wlRenderer = null;          // 异动风险视图渲染器实例（Renderer工厂创建）
     let currentSubTab = 'risk';     // 当前二级菜单：risk|browse
     let isRiskLoading = false;      // 异动风险视图加载中标记
     let isBrowseLoading = false;    // 浏览视图加载中标记
-    let allStocks = null;           // 全A股列表缓存（搜索用，当日有效，由StockAPI管理缓存）
-    let searchTimer = null;         // 搜索防抖定时器
     let browseRows = [];            // 浏览视图当前行数据（表头排序基于此数据重渲染）
     const viewLoaded = { risk: false, browse: false }; // 各视图是否已加载过（懒加载标记）
 
@@ -390,108 +387,20 @@ const Watchlist = (function () {
     }
 
     // ============================================================
-    // 搜索添加股票
+    // 搜索添加股票（共用组件StockSearch：suggest主源+全量列表降级，见stock_search.js）
     // ============================================================
 
     /**
-     * 确保全A股列表已加载（首次搜索时懒加载，当日缓存由StockAPI管理）
-     */
-    async function ensureAllStocksLoaded() {
-        if (allStocks && allStocks.length > 0) return;
-        const dropdown = document.getElementById('wlSearchDropdown');
-        showDropdown('正在加载股票列表...');
-        allStocks = await StockAPI.getAllStockList();
-        if (!allStocks || allStocks.length === 0) {
-            showDropdown('股票列表加载失败，请稍后重试');
-        }
-    }
-
-    /**
-     * 显示搜索下拉内容
-     * @param {string|Array} content - 提示文本或建议列表 [{code, name, market}]
-     */
-    function showDropdown(content) {
-        const dropdown = document.getElementById('wlSearchDropdown');
-        dropdown.innerHTML = '';
-        dropdown.style.display = 'block';
-
-        if (typeof content === 'string') {
-            const div = document.createElement('div');
-            div.className = 'search-hint';
-            div.textContent = content;
-            dropdown.appendChild(div);
-            return;
-        }
-
-        content.forEach(item => {
-            const div = document.createElement('div');
-            div.className = 'search-item' + (isInList(item.code) ? ' search-item-exists' : '');
-            div.innerHTML = `<span class="search-item-name"></span><span class="search-item-code"></span>`;
-            div.querySelector('.search-item-name').textContent = item.name;
-            div.querySelector('.search-item-code').textContent =
-                getMarketPrefix(item.market, item.code) + item.code + (isInList(item.code) ? ' (已添加)' : '');
-            div.addEventListener('click', () => {
-                if (isInList(item.code)) return;
-                addStock(item.code, item.name, item.market);
-                hideDropdown();
-                document.getElementById('wlSearchInput').value = '';
-                refreshCurrentView(false);
-            });
-            dropdown.appendChild(div);
-        });
-
-        if (content.length === 0) {
-            const div = document.createElement('div');
-            div.className = 'search-hint';
-            div.textContent = '未找到匹配的股票';
-            dropdown.appendChild(div);
-        }
-    }
-
-    /** 隐藏搜索下拉 */
-    function hideDropdown() {
-        document.getElementById('wlSearchDropdown').style.display = 'none';
-    }
-
-    /**
-     * 执行搜索（防抖后调用）
-     * @param {string} keyword - 搜索关键词（名称或代码）
-     */
-    async function doSearch(keyword) {
-        const kw = keyword.trim();
-        if (!kw) {
-            hideDropdown();
-            return;
-        }
-
-        await ensureAllStocksLoaded();
-        if (!allStocks || allStocks.length === 0) return;
-
-        // 模糊匹配：代码前缀 或 名称包含
-        const kwUpper = kw.toUpperCase();
-        const matched = allStocks.filter(s =>
-            s.code.startsWith(kwUpper) || (s.name && s.name.includes(kw))
-        ).slice(0, SEARCH_LIMIT);
-
-        showDropdown(matched);
-    }
-
-    /**
-     * 初始化搜索框事件（输入防抖 + 下拉外点击关闭）
+     * 初始化搜索框（suggest实时搜索，修复旧全量列表连拉多页易断连导致的搜索无反应）
      */
     function initSearch() {
-        const input = document.getElementById('wlSearchInput');
-        input.addEventListener('input', function () {
-            clearTimeout(searchTimer);
-            const val = this.value;
-            searchTimer = setTimeout(() => doSearch(val), 250);
-        });
-
-        // 点击下拉外区域关闭
-        document.addEventListener('click', (e) => {
-            const box = document.querySelector('.search-box');
-            if (box && !box.contains(e.target)) {
-                hideDropdown();
+        StockSearch.create({
+            inputId: 'wlSearchInput',
+            dropdownId: 'wlSearchDropdown',
+            isExists: (code) => isInList(code),
+            onPick: (item) => {
+                addStock(item.code, item.name, item.market);
+                refreshCurrentView(false);
             }
         });
     }
