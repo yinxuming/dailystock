@@ -31,7 +31,7 @@ const FupanRenderer = (function () {
         '补涨候选': 'fp-role-catchup'
     };
 
-    // 评分维度中文标签（与后端scoring.py权重键一致）
+    // 评分维度中文标签（与后端scoring.py权重键一致；v2新增lhb龙虎榜维度）
     const SCORE_DIM_LABELS = {
         priceLevel: '股价',
         floatMV: '市值',
@@ -40,7 +40,8 @@ const FupanRenderer = (function () {
         sealQuality: '封板',
         boardType: '板型',
         position: '身位',
-        sentiment: '情绪'
+        sentiment: '情绪',
+        lhb: '龙虎'
     };
 
     // ===== 涨跌停池：子行业 → 大板块归并（参照同花顺涨停池口径） =====
@@ -107,6 +108,49 @@ const FupanRenderer = (function () {
             }
         }
         return SECTOR_DEFAULT;
+    }
+
+    // ===== 龙虎榜展示（TODO13.1） =====
+
+    /**
+     * 涨停池表格龙虎榜列单元格（净买额亿元，红涨绿跌，未上榜显示--）
+     * @param {Object|null} lhb 涨停股lhb字段
+     * @returns {string} td内容HTML
+     */
+    function lhbCell(lhb) {
+        if (!lhb || !lhb.onList) return '<span class="fp-lhb-off">--</span>';
+        const net = lhb.netBuy || 0;
+        return `<span class="${net >= 0 ? 'change-up' : 'change-down'}" `
+            + `title="净买额占总成交比 ${(lhb.netBuyRatio ?? 0).toFixed(2)}%">`
+            + `${net >= 0 ? '+' : ''}${FupanData.formatYi(net)}</span>`;
+    }
+
+    /**
+     * Top5卡片龙虎榜信息行（净买+占成交比+席位画像标签+东财解读）
+     * @param {Object|null} lhb 涨停股lhb字段
+     * @returns {string} 信息行HTML（未上榜返回空串）
+     */
+    function top5LhbHtml(lhb) {
+        if (!lhb || !lhb.onList) return '';
+        const net = lhb.netBuy || 0;
+        const st = lhb.style || {};
+        // 席位画像标签（评分加减依据可视化）
+        const tags = [];
+        if ((st.instNet || 0) > 0) tags.push('机构净买');
+        if ((st.instNet || 0) < 0) tags.push('机构净卖');
+        if ((st.patternNet || 0) > 0) tags.push('格局席位');
+        if ((st.retailBuyRatio || 0) >= 0.4) tags.push('散户接盘');
+        const tagHtml = tags.length
+            ? `<span class="fp-lhb-style">${tags.join(' · ')}</span>` : '';
+        const interp = lhb.interp
+            ? `<span class="fp-lhb-interp" title="${esc(lhb.reason || '')}">${esc(lhb.interp)}</span>` : '';
+        return `
+                <div class="fp-top5-lhb">
+                    <span class="fp-lhb-badge">龙虎榜</span>
+                    <span class="${net >= 0 ? 'change-up' : 'change-down'}">净买 ${FupanData.formatYi(net)}亿</span>
+                    <span class="fp-lhb-ratio">占成交 ${(lhb.netBuyRatio ?? 0).toFixed(1)}%</span>
+                    ${tagHtml}${interp}
+                </div>`;
     }
 
     /**
@@ -787,10 +831,25 @@ const FupanRenderer = (function () {
                 <div data-fp-ladder-body>${ladderBodyHtml(day, prevDay)}</div>
             </div>`;
 
-        // 4. 晋级率
+        // 4. 最高板模式周期表（TODO14：仅最高板跟踪，甘特式 周期表）
+        const maxBoardHtml = `
+            <div class="fp-mb-toolbar" data-fp-mb-toolbar>
+                <span class="fp-mb-range" data-fp-mb-range><span class="fp-empty">周期表计算中...</span></span>
+                <label class="fp-mb-period">
+                    统计区间
+                    <select data-fp-mb-days>
+                        <option value="10">近10日</option>
+                        <option value="22">近22日</option>
+                        <option value="40">近40日</option>
+                    </select>
+                </label>
+            </div>
+            <div data-fp-mb-body><div class="fp-empty">周期表计算中...</div></div>`;
+
+        // 5. 晋级率
         const promoHtml = promotionView(day.promotion);
 
-        // 5. 情绪
+        // 6. 情绪
         const sentimentHtml = `
             <div class="fp-sentiment">
                 <span class="fp-phase-badge">${esc(sentiment.phase || '--')}</span>
@@ -809,11 +868,18 @@ const FupanRenderer = (function () {
             ${section('涨跌停统计', statsHtml)}
             ${section('涨跌停池（分板块）', poolHtml)}
             ${section('连板梯队', ladderHtml)}
+            ${section('最高板模式周期表', maxBoardHtml)}
             ${section('晋级率', promoHtml)}
             ${section('市场情绪', sentimentHtml)}`;
 
         bindPools(container, day);
         bindLadderControls(container, day, prevDay);
+        // 最高板模式周期表（异步：需加载区间内多日数据）
+        renderMaxBoardCycle(container, dateStr)
+            .catch(e => {
+                const box = container.querySelector('[data-fp-mb-body]');
+                if (box) box.innerHTML = `<div class="error"><span>周期表计算失败: ${esc(e.message)}</span></div>`;
+            });
         // 全部列表绑定表头排序（分类栏除外）
         bindSortTables(container);
     }
@@ -966,6 +1032,8 @@ const FupanRenderer = (function () {
                 <td class="fp-lb" data-v="${s.lbCount ?? ''}">${s.lbCount ?? 1}板</td>
                 <td>${esc(s.stats || '--')}</td>
                 <td>${typeBadge(s.limitType)}</td>
+                <td data-v="${s.lhb && s.lhb.onList ? (s.lhb.netBuy || 0) : ''}"
+                    title="${s.lhb && s.lhb.onList ? esc(s.lhb.interp || s.lhb.reason || '') : ''}">${lhbCell(s.lhb)}</td>
                 <td class="fp-industry" title="${esc(s.industry || '')}">${esc(s.industry || '--')}</td>
             </tr>`).join('');
         return `
@@ -974,7 +1042,8 @@ const FupanRenderer = (function () {
                     <thead><tr>
                         <th>#</th><th>名称</th><th>代码</th><th>现价</th><th>涨跌幅%</th><th>成交额</th><th>流通市值</th>
                         <th>换手%</th><th>封单额</th><th title="封单额/成交额，越大封板越坚决">封成比</th>
-                        <th>首次封板</th><th>最后封板</th><th>开板</th><th>连板</th><th>几天几板</th><th>板型</th><th>行业</th>
+                        <th>首次封板</th><th>最后封板</th><th>开板</th><th>连板</th><th>几天几板</th><th>板型</th>
+                        <th title="龙虎榜净买额（亿元），hover显示席位解读">龙虎榜</th><th>行业</th>
                     </tr></thead>
                     <tbody>${rows}</tbody>
                 </table>
@@ -1227,24 +1296,330 @@ const FupanRenderer = (function () {
             </div>`;
     }
 
-    // ===== 子tab4：评分预测 =====
+    // ===== 涨跌停：最高板模式周期表（TODO14） =====
+
+    // 统计区间持久化key（近10/22/40个交易日，默认22对齐参考图"22个交易日"口径）
+    const MAXBOARD_DAYS_KEY = 'fupan_maxboard_days';
+    // renderMaxBoardCycle异步渲染令牌（日期/区间切换时丢弃过期DOM更新，防错乱）
+    let maxBoardToken = 0;
+    // 被跟踪股票配色（柔和底色+同色描边，同一股票整个周期同色形成阶梯视觉；金色留给最高板高亮）
+    const MAXBOARD_COLORS = [
+        { bg: 'rgba(96, 165, 250, 0.30)', fg: '#bfdbfe', bd: 'rgba(96, 165, 250, 0.60)' },
+        { bg: 'rgba(52, 211, 153, 0.24)', fg: '#a7f3d0', bd: 'rgba(52, 211, 153, 0.55)' },
+        { bg: 'rgba(251, 146, 60, 0.26)', fg: '#fed7aa', bd: 'rgba(251, 146, 60, 0.55)' },
+        { bg: 'rgba(167, 139, 250, 0.26)', fg: '#ddd6fe', bd: 'rgba(167, 139, 250, 0.55)' },
+        { bg: 'rgba(244, 114, 182, 0.24)', fg: '#fbcfe8', bd: 'rgba(244, 114, 182, 0.55)' },
+        { bg: 'rgba(250, 204, 21, 0.22)', fg: '#fef08a', bd: 'rgba(250, 204, 21, 0.50)' },
+        { bg: 'rgba(45, 212, 191, 0.24)', fg: '#99f6e4', bd: 'rgba(45, 212, 191, 0.55)' },
+        { bg: 'rgba(248, 113, 113, 0.24)', fg: '#fecaca', bd: 'rgba(248, 113, 113, 0.55)' }
+    ];
+    // 星期中文（getDay() 0=周日）
+    const WEEK_CN = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 
     /**
-     * 渲染评分预测tab
-     * 主流程：读取阈值配置（生效日机制：生效日起按自定义阈值前端重算，之前用采集端落盘评分）
-     *        → 配置状态条 + 阈值设置面板 → Top5卡片（雷达图）→ 全量评分表 → 模型说明
+     * 日期短标签：M.D 周X（周期表行头，参考图口径）
+     * @param {string} dateStr YYYY-MM-DD
+     * @returns {string} 如"9.10 周四"
+     */
+    function mbDateLabel(dateStr) {
+        const d = new Date(String(dateStr).replace(/-/g, '/'));
+        return (d.getMonth() + 1) + '.' + d.getDate() + ' ' + WEEK_CN[d.getDay()];
+    }
+
+    /**
+     * 构建最高板模式周期表数据（TODO14）
+     * 主流程：取统计区间（近N个交易日）逐日数据 → 每日涨停池最高板个股=被跟踪股票
+     *        → 向前回补日期（区间首日个股可能已连板，保证首板诞生可见）
+     *        → 被跟踪股票在窗口内全部出现落格（首板→断板整个周期，多周期自然分段）
+     * 口径：只统计最高板（剔除ST，反包个股连板数天然重新计数），参考图脚注
+     * @param {string} dateStr 当前交易日 YYYY-MM-DD（区间截止日）
+     * @param {number} periodLen 统计区间交易日数
+     * @returns {Promise<Object|null>} {days,rows,cells,dayMax,maxCol,tracked}；无数据返回null
+     */
+    async function buildMaxBoardData(dateStr, periodLen) {
+        const dates = await FupanData.getAvailableDates();
+        const endIdx = dates.indexOf(dateStr);
+        if (endIdx < 0) return null;
+
+        // 1. 加载统计区间内每日数据（任一天失败跳过）
+        const startIdx = Math.max(0, endIdx - periodLen + 1);
+        const days = new Map();
+        for (let i = startIdx; i <= endIdx; i++) {
+            const d = await FupanData.getDay(dates[i]).catch(() => null);
+            if (d) days.set(dates[i], d);
+        }
+        if (!days.size) return null;
+
+        // 2. 逐日最高板与被跟踪股票（当日最高板可并列多只，全部跟踪）
+        const isST = s => /ST/i.test(String(s.name || ''));
+        const dayMax = new Map();
+        const trackedRaw = new Map();   // code -> {code,name,firstDate}
+        for (let i = startIdx; i <= endIdx; i++) {
+            const dt = dates[i], d = days.get(dt);
+            if (!d) continue;
+            const pool = (d.ztpool || []).filter(s => !isST(s));
+            let mx = 0;
+            pool.forEach(s => { const lb = s.lbCount || 1; if (lb > mx) mx = lb; });
+            dayMax.set(dt, mx);
+            pool.forEach(s => {
+                if (mx > 0 && (s.lbCount || 1) === mx && !trackedRaw.has(s.code)) {
+                    trackedRaw.set(s.code, { code: s.code, name: s.name, firstDate: dt });
+                }
+            });
+        }
+        if (!trackedRaw.size) return null;
+
+        // 3. 向前回补窗口：区间内最高板高度为maxLB，首日个股最多已连板maxLB天
+        let maxLB = 0;
+        dayMax.forEach(v => { if (v > maxLB) maxLB = v; });
+        for (let i = Math.max(0, startIdx - Math.max(0, maxLB - 1)); i < startIdx; i++) {
+            if (days.has(dates[i])) continue;
+            const d = await FupanData.getDay(dates[i]).catch(() => null);
+            if (d) days.set(dates[i], d);
+        }
+
+        // 4. 落格：被跟踪股票在扩展窗口内的每次出现（date -> 板数 -> 股票[]）
+        const cells = new Map();
+        let firstCellDate = null, maxCol = 0;
+        days.forEach((d, dt) => {
+            (d.ztpool || []).forEach(s => {
+                const t = trackedRaw.get(s.code);
+                if (!t) return;
+                const lb = s.lbCount || 1;
+                if (lb > maxCol) maxCol = lb;
+                if (!firstCellDate || dt < firstCellDate) firstCellDate = dt;
+                if (!cells.has(dt)) cells.set(dt, new Map());
+                const m = cells.get(dt);
+                if (!m.has(lb)) m.set(lb, []);
+                m.get(lb).push(t);
+            });
+        });
+        if (!cells.size) return null;
+
+        // 5. 展示行：首个单元格日期 ~ 当前交易日，降序（最新在上，参考图口径）
+        const rows = [...days.keys()]
+            .filter(dt => dt >= firstCellDate && dt <= dateStr)
+            .sort((a, b) => (a < b ? 1 : -1));
+
+        // 6. 配色序：按首次成为最高板日期+名称排序分配（同股票全周期同色）
+        const tracked = [...trackedRaw.values()].sort((a, b) =>
+            a.firstDate < b.firstDate ? -1 : a.firstDate > b.firstDate ? 1
+                : a.name.localeCompare(b.name, 'zh-CN'));
+        tracked.forEach((t, i) => { t.colorIdx = i; });
+
+        return { days, rows, cells, dayMax, maxCol, tracked };
+    }
+
+    /**
+     * 周期表单元格HTML（TODO14）
+     * 内容：被跟踪股票徽标（当日最高板金框高亮）+ 2板以上的当日该板级晋级率
+     * @param {Object|null} day 当日数据（取promotion）
+     * @param {number} board 板数（列）
+     * @param {Array|null} stocks 该格股票（来自cells）
+     * @param {number} dayMaxLb 当日最高板高度
+     * @returns {string} td HTML
+     */
+    function mbCellHtml(day, board, stocks, dayMaxLb) {
+        let rateHtml = '';
+        if (board >= 2) {
+            const pr = (((day || {}).promotion || {}).overall || {})[(board - 1) + '->' + board];
+            if (pr && pr.yesterday > 0) {
+                const pct = Math.round((pr.rate || 0) * 100);
+                rateHtml = `<span class="fp-mb-rate" title="${board - 1}板→${board}板：晋级${pr.promoted}/${pr.yesterday}">${pct}%</span>`;
+            }
+        }
+        if (!stocks || !stocks.length) return `<td class="fp-mb-cell">${rateHtml}</td>`;
+        const isMax = board === dayMaxLb;
+        const badges = stocks.map(s => {
+            const c = MAXBOARD_COLORS[s.colorIdx % MAXBOARD_COLORS.length];
+            return `<span class="fp-mb-stock${isMax ? ' fp-mb-max' : ''}" style="background:${c.bg};color:${c.fg};border-color:${c.bd}" title="${esc(s.name)} ${board}板${isMax ? '（当日最高板）' : ''}">${stockLink(s.code, s.name)}</span>`;
+        }).join('');
+        return `<td class="fp-mb-cell">${badges}${rateHtml}</td>`;
+    }
+
+    /**
+     * 周期表表格HTML（行=日期降序带周几+当日涨停/跌停数及变化，列=板数）
+     * @param {Object} data buildMaxBoardData结果
+     * @returns {string} HTML
+     */
+    function mbTableHtml(data) {
+        const colCount = Math.max(data.maxCol, 1);
+        const headCells = [];
+        for (let b = 1; b <= colCount; b++) headCells.push(`<th>${b}板</th>`);
+
+        const trs = data.rows.map((dt, i) => {
+            const day = data.days.get(dt) || {};
+            const stats = day.stats || {};
+            const prevDay = i + 1 < data.rows.length ? (data.days.get(data.rows[i + 1]) || {}) : null;
+            const prevStats = prevDay ? (prevDay.stats || {}) : {};
+            /**
+             * 涨跌停数变化徽标（较上一交易日；首行无前日不显示）
+             */
+            const chg = (cur, prev) => {
+                if (!prevDay || cur == null || prev == null) return '';
+                const dv = cur - prev;
+                if (!dv) return '<span class="fp-mb-flat">—</span>';
+                return dv > 0 ? `<span class="change-up">↑${dv}</span>` : `<span class="change-down">↓${-dv}</span>`;
+            };
+            const dayCells = [];
+            for (let b = 1; b <= colCount; b++) {
+                const stocks = data.cells.has(dt) && data.cells.get(dt).has(b)
+                    ? data.cells.get(dt).get(b) : null;
+                dayCells.push(mbCellHtml(day, b, stocks, data.dayMax.get(dt) || 0));
+            }
+            return `<tr>
+                <td class="fp-mb-date">${mbDateLabel(dt)}</td>
+                <td class="fp-mb-num">${stats.ztCount ?? '--'} ${chg(stats.ztCount, prevStats.ztCount)}</td>
+                <td class="fp-mb-num">${stats.dtCount ?? '--'} ${chg(stats.dtCount, prevStats.dtCount)}</td>
+                ${dayCells.join('')}
+            </tr>`;
+        }).join('');
+
+        return `
+            <div class="table-wrapper fp-mb-wrap">
+                <table class="stock-table fp-mb-table" data-no-sort="1">
+                    <thead><tr>
+                        <th class="fp-mb-date">日期</th>
+                        <th title="当日涨停数（较上一交易日变化）">涨停</th>
+                        <th title="当日跌停数（较上一交易日变化）">跌停</th>
+                        ${headCells.join('')}
+                    </tr></thead>
+                    <tbody>${trs}</tbody>
+                </table>
+            </div>
+            <p class="fp-mb-note">仅跟踪各交易日最高板个股（剔除ST，反包连板数重新计数）；同色徽标为同一股票的完整连板周期（首板→断板）；金框=当日最高板；2板以上格内小字为当日该板级晋级率。</p>`;
+    }
+
+    /**
+     * 渲染最高板模式周期表（TODO14）：区间选择（持久化）+ 区间摘要 + 甘特式表格
+     * @param {HTMLElement} container 涨跌停tab容器
+     * @param {string} dateStr 当前交易日 YYYY-MM-DD
+     */
+    async function renderMaxBoardCycle(container, dateStr) {
+        const token = ++maxBoardToken;
+        const body = container.querySelector('[data-fp-mb-body]');
+        const rangeEl = container.querySelector('[data-fp-mb-range]');
+        const sel = container.querySelector('[data-fp-mb-days]');
+        if (!body) return;
+
+        // 区间选择（onchange属性赋值避免重渲染时重复绑定）
+        const periodLen = Number(FupanData.getSetting(MAXBOARD_DAYS_KEY, 22)) || 22;
+        if (sel) {
+            sel.value = String(periodLen);
+            sel.onchange = () => {
+                FupanData.setSetting(MAXBOARD_DAYS_KEY, Number(sel.value));
+                renderMaxBoardCycle(container, dateStr).catch(() => { });
+            };
+        }
+
+        const data = await buildMaxBoardData(dateStr, periodLen);
+        if (token !== maxBoardToken) return;   // 过期渲染丢弃
+        if (!data) {
+            if (rangeEl) rangeEl.innerHTML = '<span class="fp-empty">区间内无涨停数据</span>';
+            body.innerHTML = '<div class="fp-empty">暂无最高板周期数据（区间内无涨停记录）</div>';
+            return;
+        }
+
+        // 区间摘要：M.D–M.D 连板高度 · N个交易日 · 当前高度X板·个股名
+        const first = data.rows[data.rows.length - 1];
+        const curMax = data.dayMax.get(dateStr) || 0;
+        const curStocks = data.cells.has(dateStr) && data.cells.get(dateStr).has(curMax)
+            ? data.cells.get(dateStr).get(curMax).map(s => s.name).join('、') : '';
+        if (rangeEl) {
+            rangeEl.innerHTML = `${mbDateLabel(first).split(' ')[0]}–${mbDateLabel(dateStr)} 连板高度 · ${data.rows.length}个交易日`
+                + (curMax ? ` · 高度${curMax}板${curStocks ? '·' + esc(curStocks) : ''}` : '');
+        }
+        body.innerHTML = mbTableHtml(data);
+    }
+
+    // ===== 子tab4：评分预测 =====
+
+    // ===== 评分预测：预测回溯模型方案（TODO13.2） =====
+
+    // 方案id → 展示名（current/initial恒可用；ybest/d3best/d5best依赖回测周期数据）
+    const SCHEME_LABELS = { current: '当前方案', ybest: '昨日最准', d3best: '3日最准', d5best: '5日最准', initial: '初始' };
+
+    // 当前选中的方案tab（会话内状态；不持久化，按需求默认"昨日最准"）
+    let activeSchemeId = 'ybest';
+    // 方案计算缓存（视图日期+当前方案配置 → 5方案结果），切tab不重算调优
+    let schemeCache = { key: '', result: null };
+    // renderScore异步渲染令牌（旧渲染未完成时丢弃过期DOM更新，防止错乱）
+    let scoreRenderToken = 0;
+
+    /**
+     * 构建5种模型方案与回测命中率（TODO13.2.1）
+     * 主流程：以当前方案为基准 → 加载昨日/近3日/近5日回测周期（预测日评分vs次日实际结果）
+     *        → 爬山调优得昨日/3日/5日最准方案 → 计算各方案在3窗口上的Top5命中率
+     * 回测周期定义：第i交易日预测Top5，第i+1交易日涨停池中连板数更高=命中
+     * @param {string} dateStr 当前交易日 YYYY-MM-DD（回测周期截止日，即"今日"视角）
+     * @returns {Promise<{base:Object, cycles:{d1:Array,d3:Array,d5:Array},
+     *                    schemes:{current:Object,ybest:Object|null,d3best:Object|null,d5best:Object|null,initial:Object}}>}
+     */
+    async function buildSchemes(dateStr) {
+        const saved = FupanScoring.getSavedConfig();
+        const base = saved ? FupanScoring.cloneConfig(saved) : FupanScoring.defaultConfig();
+        const key = dateStr + '|' + JSON.stringify([base.weights, base.veto, base.advice]);
+        if (schemeCache.key === key && schemeCache.result) return schemeCache.result;
+
+        const result = { base, cycles: { d1: [], d3: [], d5: [] }, schemes: {} };
+        const dates = await FupanData.getAvailableDates();
+        const idx = dates.indexOf(dateStr);
+        if (idx > 0) {
+            /**
+             * 加载回测周期[from..to]（周期=预测日数据+次日结果数据，任一缺失或无涨停池则跳过）
+             */
+            const loadCycles = async (from, to) => {
+                const arr = [];
+                for (let i = Math.max(0, from); i <= to; i++) {
+                    const day = await FupanData.getDay(dates[i]).catch(() => null);
+                    const next = i + 1 < dates.length
+                        ? await FupanData.getDay(dates[i + 1]).catch(() => null) : null;
+                    if (day && next && (day.ztpool || []).length) arr.push({ day, next });
+                }
+                return arr;
+            };
+            result.cycles.d1 = await loadCycles(idx - 1, idx - 1);
+            result.cycles.d3 = await loadCycles(idx - 3, idx - 1);
+            result.cycles.d5 = await loadCycles(idx - 5, idx - 1);
+        }
+
+        /**
+         * 配置在3个回测窗口上的命中率（方案对比表数据源）
+         */
+        const accAll = config => ({
+            d1: FupanScoring.evalSchemeAccuracy(result.cycles.d1, config),
+            d3: FupanScoring.evalSchemeAccuracy(result.cycles.d3, config),
+            d5: FupanScoring.evalSchemeAccuracy(result.cycles.d5, config)
+        });
+        /**
+         * 调优结果包装（深拷贝防引用共享，附3窗口命中率）
+         */
+        const wrapOpt = opt => ({ config: FupanScoring.cloneConfig(opt.config), acc: accAll(opt.config) });
+
+        result.schemes.current = { config: FupanScoring.cloneConfig(base), acc: accAll(base) };
+        const initialCfg = FupanScoring.defaultConfig();
+        result.schemes.initial = { config: initialCfg, acc: accAll(initialCfg) };
+        result.schemes.ybest = result.cycles.d1.length ? wrapOpt(FupanScoring.optimizeScheme(result.cycles.d1, base)) : null;
+        result.schemes.d3best = result.cycles.d3.length ? wrapOpt(FupanScoring.optimizeScheme(result.cycles.d3, base)) : null;
+        result.schemes.d5best = result.cycles.d5.length ? wrapOpt(FupanScoring.optimizeScheme(result.cycles.d5, base)) : null;
+
+        schemeCache = { key, result };
+        return result;
+    }
+
+    /**
+     * 渲染评分预测tab（TODO13.2重构）
+     * 主流程：配置状态条 → 工具栏（阈值设置/备份导出/导入备份）→ 阈值面板
+     *        → 预测回溯方案区（本日预测准确率 + 方案tab + 方案body + 方案对比表）→ 近5日回测
      * @param {HTMLElement} container 容器
      * @param {Object} day 单日复盘数据
      * @param {string} dateStr 当前交易日 YYYY-MM-DD
      */
     async function renderScore(container, day, dateStr) {
+        const token = ++scoreRenderToken;
         const config = FupanScoring.getSavedConfig();
         const hasCustom = config && !FupanScoring.isDefaultConfig(config);
         const active = hasCustom && FupanScoring.isActiveFor(config, dateStr);
-        // 生效日及之后：前端按自定义阈值重算；之前：采集端落盘评分（历史不受影响）
-        const scores = active ? FupanScoring.rescoreDay(day, config) : (day.scores || {});
-        const top5 = scores.top5 || [];
-        const weights = scores.weights || {};
 
         // 0. 配置状态条（已配置自定义阈值时提示生效状态）
         let configBanner = '';
@@ -1254,12 +1629,368 @@ const FupanRenderer = (function () {
                 : `<div class="fp-config-banner fp-config-muted">已配置自定义阈值（生效于 ${esc(config.effectiveDate)}），本日早于生效日，展示采集端原始评分</div>`;
         }
 
-        // 1. Top5卡片
+        container.innerHTML = `
+            ${configBanner}
+            <div class="fp-score-toolbar">
+                <button class="fp-cfg-toggle" data-fp-cfg-toggle title="微调当前方案参数（维度权重/一票否决/建议分级）">⚙ 阈值设置</button>
+                <button class="fp-cfg-toggle" data-fp-export title="当前方案参数导出为JSON备份文件到本地">💾 备份导出</button>
+                <button class="fp-cfg-toggle" data-fp-import-btn title="从本地JSON备份文件导入方案参数">📂 导入备份</button>
+                <input type="file" accept=".json,application/json" data-fp-import-file style="display:none">
+            </div>
+            <div data-fp-cfg-panel style="display:none"></div>
+            ${section('预测回溯（模型方案）', `
+                <div data-fp-acc-line><div class="fp-empty">本日预测准确率计算中...</div></div>
+                <div data-fp-scheme-tabs></div>
+                <div data-fp-scheme-body><div class="fp-empty">模型方案调优计算中...</div></div>
+                <div data-fp-scheme-compare></div>
+            `)}
+            ${section('近5日回测（Top5晋级正确率）', '<div data-fp-backtest><div class="fp-empty">回测计算中...</div></div>')}`;
+
+        bindScoreToolbar(container, day, dateStr);
+
+        // 阈值设置面板（当前方案微调入口，展开状态持久化）
+        const panel = container.querySelector('[data-fp-cfg-panel]');
+        if (FupanData.getSetting('fupan_score_cfg_open', false)) panel.style.display = '';
+        await renderCfgPanel(panel, container, day, dateStr);
+
+        // 异步1：本日预测准确率（T+1结果已出时显示当时评分的准确率，TODO13.2.1）
+        renderDayAccuracy(container.querySelector('[data-fp-acc-line]'), day, dateStr)
+            .catch(e => {
+                const b = container.querySelector('[data-fp-acc-line]');
+                if (b) b.innerHTML = '<div class="fp-empty">本日预测准确率计算失败: ' + esc(e.message) + '</div>';
+            });
+
+        // 异步2：模型方案区（昨日/3日/5日最准方案自动调优后渲染tab+body+对比表）
+        buildSchemes(dateStr)
+            .then(schemes => {
+                if (token !== scoreRenderToken) return;  // 过期渲染丢弃
+                renderSchemeArea(container, day, dateStr, schemes);
+            })
+            .catch(e => {
+                const b = container.querySelector('[data-fp-scheme-body]');
+                if (b) b.innerHTML = '<div class="fp-empty">方案调优失败: ' + esc(e.message) + '</div>';
+            });
+
+        // 异步3：近5日回测
+        renderBacktest(container.querySelector('[data-fp-backtest]'), dateStr)
+            .catch(e => {
+                const box = container.querySelector('[data-fp-backtest]');
+                if (box) box.innerHTML = `<div class="error"><span>回测计算失败: ${esc(e.message)}</span></div>`;
+            });
+    }
+
+    /**
+     * 绑定评分tab工具栏（阈值设置开关 / 方案备份导出 / 导入备份）
+     * @param {HTMLElement} container tab容器
+     * @param {Object} day 单日数据
+     * @param {string} dateStr 当前交易日
+     */
+    function bindScoreToolbar(container, day, dateStr) {
+        const panel = container.querySelector('[data-fp-cfg-panel]');
+        container.querySelector('[data-fp-cfg-toggle]').addEventListener('click', () => {
+            const show = panel.style.display === 'none';
+            panel.style.display = show ? '' : 'none';
+            FupanData.setSetting('fupan_score_cfg_open', show);
+        });
+        container.querySelector('[data-fp-export]').addEventListener('click', exportSchemeBackup);
+        const fileInput = container.querySelector('[data-fp-import-file]');
+        container.querySelector('[data-fp-import-btn]').addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', () => {
+            importSchemeBackup(fileInput.files[0], container, day, dateStr);
+            fileInput.value = '';
+        });
+    }
+
+    /**
+     * 当前方案备份导出（TODO13.2.3：JSON文件下载到本地）
+     */
+    function exportSchemeBackup() {
+        const saved = FupanScoring.getSavedConfig();
+        const config = saved ? FupanScoring.cloneConfig(saved) : FupanScoring.defaultConfig();
+        const payload = {
+            app: 'dailystock',
+            type: 'fupan_score_scheme',
+            name: '当前方案',
+            exportedAt: new Date().toISOString(),
+            config
+        };
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'fupan评分方案备份_' + new Date().toISOString().slice(0, 10).replace(/-/g, '') + '.json';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }
+
+    /**
+     * 方案备份导入（TODO13.2.3：格式校验 → 规范化钳制 → 二次确认 → 设为当前方案）
+     * 主流程：读取JSON → 校验type与配置结构 → normalizeConfig数值钳制 → confirm → 保存并重渲染
+     * @param {File|null} file 备份文件
+     * @param {HTMLElement} container tab容器
+     * @param {Object} day 单日数据
+     * @param {string} dateStr 当前交易日
+     */
+    async function importSchemeBackup(file, container, day, dateStr) {
+        if (!file) return;
+        let obj;
+        try {
+            obj = JSON.parse(await file.text());
+        } catch (e) {
+            alert('导入失败：文件不是合法JSON（' + e.message + '）');
+            return;
+        }
+        const cfg = obj && obj.type === 'fupan_score_scheme' && obj.config
+            && obj.config.weights && obj.config.veto && obj.config.advice ? obj.config : null;
+        if (!cfg) {
+            alert('导入失败：不是本系统导出的评分方案备份文件');
+            return;
+        }
+        const normalized = FupanScoring.normalizeConfig({
+            effectiveDate: /^\d{4}-\d{2}-\d{2}$/.test(String(cfg.effectiveDate || ''))
+                ? cfg.effectiveDate : dateStr,
+            weights: cfg.weights, veto: cfg.veto, advice: cfg.advice
+        });
+        const sum = Object.keys(normalized.weights).reduce((a, k) => a + Number(normalized.weights[k]), 0);
+        if (!window.confirm('导入方案备份为当前方案？\n导出时间：' + (obj.exportedAt || '--')
+            + '\n权重合计：' + sum + '（默认100）\n生效日期：' + normalized.effectiveDate
+            + '\n（生效日之前的评分展示不受影响）')) return;
+        FupanScoring.saveConfig(normalized);
+        renderScore(container, day, dateStr);
+    }
+
+    /**
+     * 本日预测准确率（TODO13.2.1：T+1结果获取到后，再次打开T日数据时显示当时评分对应的准确率）
+     * @param {HTMLElement} box 容器
+     * @param {Object} day 单日数据
+     * @param {string} dateStr 当前交易日
+     */
+    async function renderDayAccuracy(box, day, dateStr) {
+        if (!box) return;
+        const dates = await FupanData.getAvailableDates();
+        const idx = dates.indexOf(dateStr);
+        if (idx < 0 || idx + 1 >= dates.length) {
+            box.innerHTML = '<div class="fp-empty">本日为最新交易日，T+1结果未出，暂无法验证预测准确率</div>';
+            return;
+        }
+        const next = await FupanData.getDay(dates[idx + 1]).catch(() => null);
+        if (!next) {
+            box.innerHTML = '<div class="fp-empty">次日（' + esc(dates[idx + 1]) + '）数据缺失，暂无法验证预测准确率</div>';
+            return;
+        }
+        /**
+         * Top5次日晋级判定（✓晋级/✗未晋级）
+         */
+        const judge = top5 => (top5 || []).map(s => {
+            const ns = (next.ztpool || []).find(x => x.code === s.code);
+            return { name: s.name, ok: !!(ns && (ns.lbCount || 1) > (s.lbCount || 1)) };
+        });
+        const storedR = judge((day.scores || {}).top5);
+        const hits = storedR.filter(x => x.ok).length;
+        const chips = storedR.map(x =>
+            `<span class="fp-bt-stock ${x.ok ? 'fp-bt-ok' : 'fp-bt-miss'}" title="${esc(x.name)}：${x.ok ? '次日晋级' : '次日未晋级'}">${esc(x.name)}${x.ok ? '✓' : '✗'}</span>`).join('');
+        // 自定义阈值生效时，附当前方案重算Top5的准确率对比
+        const config = FupanScoring.getSavedConfig();
+        const hasCustom = config && !FupanScoring.isDefaultConfig(config);
+        let curHtml = '';
+        if (hasCustom && FupanScoring.isActiveFor(config, dateStr)) {
+            const curR = judge(FupanScoring.rescoreDay(day, config).top5);
+            curHtml = ` · 当前方案 <b>${curR.filter(x => x.ok).length}/${curR.length}</b>`;
+        }
+        box.innerHTML = `
+            <div class="fp-acc-line">
+                <span class="fp-acc-title">${esc(dateStr)} 预测 vs ${esc(dates[idx + 1])} 结果（T+1已出）：</span>
+                <span>当时落盘Top5 <b>${hits}/${storedR.length}</b>${curHtml}</span>
+                <span class="fp-bt-detail">${chips || '--'}</span>
+            </div>`;
+    }
+
+    /**
+     * 渲染模型方案区（tab栏 + 方案body + 方案对比表；tab切换仅重渲染本区域）
+     * @param {HTMLElement} container tab容器
+     * @param {Object} day 单日数据
+     * @param {string} dateStr 当前交易日
+     * @param {Object} schemes buildSchemes结果
+     */
+    function renderSchemeArea(container, day, dateStr, schemes) {
+        const S = schemes.schemes;
+        // 选中方案回退：默认昨日最准（TODO13.2.4），不可用时回退当前方案
+        if (!S[activeSchemeId]) activeSchemeId = 'ybest';
+        if (!S[activeSchemeId]) activeSchemeId = 'current';
+        renderSchemeTabs(container.querySelector('[data-fp-scheme-tabs]'), schemes);
+        renderSchemeBody(container.querySelector('[data-fp-scheme-body]'), day, dateStr, schemes);
+        renderSchemeCompare(container.querySelector('[data-fp-scheme-compare]'), schemes);
+
+        // tab切换（重渲染整个方案区）
+        container.querySelectorAll('[data-scheme]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                if (btn.dataset.scheme === activeSchemeId) return;
+                activeSchemeId = btn.dataset.scheme;
+                renderSchemeArea(container, day, dateStr, schemes);
+            });
+        });
+        // 方案应用/恢复按钮
+        bindSchemeActions(container, day, dateStr, schemes);
+    }
+
+    /**
+     * 渲染方案tab栏（当前方案与昨日最准一致时标注"=昨日最准"，TODO13.2.4）
+     * @param {HTMLElement} tabsBox tab容器
+     * @param {Object} schemes buildSchemes结果
+     */
+    function renderSchemeTabs(tabsBox, schemes) {
+        if (!tabsBox) return;
+        const S = schemes.schemes;
+        const curEqY = S.ybest && FupanScoring.configsEqual(S.current.config, S.ybest.config);
+        const items = [{
+            id: 'current', label: '当前方案', badge: curEqY ? '=昨日最准' : '', rate: null,
+            title: '用户当前生效配置（含手动微调）'
+        }];
+        if (S.ybest) items.push({
+            id: 'ybest', label: '昨日最准', badge: '', rate: S.ybest.acc.d1,
+            title: '以上一交易日预测vs当日实际结果自动调优'
+        });
+        if (S.d3best) items.push({
+            id: 'd3best', label: '3日最准', badge: '', rate: S.d3best.acc.d3,
+            title: '以近3个交易日预测vs实际结果自动调优'
+        });
+        if (S.d5best) items.push({
+            id: 'd5best', label: '5日最准', badge: '', rate: S.d5best.acc.d5,
+            title: '以近5个交易日预测vs实际结果自动调优'
+        });
+        items.push({
+            id: 'initial', label: '初始', badge: '', rate: null,
+            title: '系统默认参数（与采集端落盘评分一致）'
+        });
+        tabsBox.innerHTML = items.map(it => `
+            <button class="fp-scheme-tab${it.id === activeSchemeId ? ' active' : ''}" data-scheme="${it.id}" title="${esc(it.title)}">
+                ${esc(it.label)}${it.rate && it.rate.rate !== null ? `<i>${Math.round(it.rate.rate * 100)}%</i>` : ''}${it.badge ? `<em>${esc(it.badge)}</em>` : ''}
+            </button>`).join('');
+    }
+
+    /**
+     * 按方案id取当日评分结果
+     * 当前方案走生效日机制（生效日起前端重算，之前用采集端落盘评分）；
+     * 初始方案=采集端落盘评分；昨日/3日/5日最准=方案参数下视图时what-if重算
+     * @param {string} id 方案id
+     * @param {Object} schemes buildSchemes结果
+     * @param {Object} day 单日数据
+     * @param {string} dateStr 当前交易日
+     * @returns {Object} 与后端scores同构 {model, weights, top5, vetoed, all}
+     */
+    function scoresForScheme(id, schemes, day, dateStr) {
+        if (id === 'current') {
+            const saved = FupanScoring.getSavedConfig();
+            const hasCustom = saved && !FupanScoring.isDefaultConfig(saved);
+            if (hasCustom && FupanScoring.isActiveFor(saved, dateStr)) {
+                return FupanScoring.rescoreDay(day, saved);
+            }
+            return day.scores || {};
+        }
+        if (id === 'initial') return day.scores || {};
+        const sc = schemes.schemes[id];
+        return sc ? FupanScoring.rescoreDay(day, sc.config) : (day.scores || {});
+    }
+
+    /**
+     * 方案信息条HTML（描述 + 权重调整摘要 + 3窗口命中率 + 操作按钮）
+     * @param {string} id 方案id
+     * @param {Object} schemes buildSchemes结果
+     * @param {string} dateStr 当前交易日
+     * @returns {string} HTML
+     */
+    function schemeInfoHtml(id, schemes, dateStr) {
+        const S = schemes.schemes;
+        const accChip = a => (a && a.rate !== null)
+            ? `${a.hits}/${a.total}（${Math.round(a.rate * 100)}%）` : '--';
+        const accRow = sc => sc
+            ? `昨日 ${accChip(sc.acc.d1)} · 近3日 ${accChip(sc.acc.d3)} · 近5日 ${accChip(sc.acc.d5)}` : '';
+        if (id === 'current') {
+            const saved = FupanScoring.getSavedConfig();
+            const isDefault = !saved || FupanScoring.isDefaultConfig(saved);
+            const eqY = S.ybest && FupanScoring.configsEqual(S.current.config, S.ybest.config);
+            return `
+                <div class="fp-scheme-info">
+                    <div class="fp-scheme-desc">
+                        <b>当前方案</b>${eqY ? '<span class="fp-scheme-eq">= 昨日最准</span>' : ''}
+                        <span class="fp-scheme-sub">${isDefault ? '默认参数（未自定义）' : '自定义参数，生效于 ' + esc(saved.effectiveDate)}</span>
+                        <span class="fp-scheme-acc">回测命中：${accRow(S.current)}</span>
+                    </div>
+                    <div class="fp-scheme-actions">
+                        <button class="fp-scheme-btn" data-scheme-reset title="清除自定义阈值，恢复系统默认参数">恢复为初始方案</button>
+                    </div>
+                </div>`;
+        }
+        if (id === 'initial') {
+            return `
+                <div class="fp-scheme-info">
+                    <div class="fp-scheme-desc">
+                        <b>初始方案</b>
+                        <span class="fp-scheme-sub">系统默认参数，与采集端落盘评分一致</span>
+                        <span class="fp-scheme-acc">回测命中：${accRow(S.initial)}</span>
+                    </div>
+                    <div class="fp-scheme-actions">
+                        <button class="fp-scheme-btn" data-scheme-apply data-scheme-id="initial">设为当前方案</button>
+                    </div>
+                </div>`;
+        }
+        // 自动调优方案（昨日/3日/5日最准）
+        const sc = S[id];
+        const winLabel = { ybest: '上一交易日', d3best: '近3个交易日', d5best: '近5个交易日' }[id];
+        const optAcc = { ybest: sc.acc.d1, d3best: sc.acc.d3, d5best: sc.acc.d5 }[id];
+        // 权重调整摘要（相对当前方案的增减）
+        const diffs = Object.keys(SCORE_DIM_LABELS)
+            .filter(k => Number(sc.config.weights[k]) !== Number(schemes.base.weights[k]))
+            .map(k => {
+                const d = Number(sc.config.weights[k]) - Number(schemes.base.weights[k]);
+                return SCORE_DIM_LABELS[k] + (d > 0 ? '+' : '') + d;
+            });
+        const diffTxt = diffs.length ? '权重调整：' + diffs.join('、') : '权重无调整（与当前方案一致）';
+        return `
+            <div class="fp-scheme-info">
+                <div class="fp-scheme-desc">
+                    <b>${SCHEME_LABELS[id]}</b>
+                    <span class="fp-scheme-sub">以当前方案为起点，按${winLabel}预测vs实际结果爬山调优（仅调权重，否决/分级不变）</span>
+                    <span class="fp-scheme-acc">调优窗口命中：${accChip(optAcc)} · 全窗口：${accRow(sc)} · ${esc(diffTxt)}</span>
+                </div>
+                <div class="fp-scheme-actions">
+                    <button class="fp-scheme-btn" data-scheme-apply data-scheme-id="${id}">设为当前方案</button>
+                </div>
+            </div>`;
+    }
+
+    /**
+     * 渲染方案body（方案信息条 + Top5卡片 + 全量评分表 + 模型说明，随选中方案联动）
+     * @param {HTMLElement} bodyBox body容器
+     * @param {Object} day 单日数据
+     * @param {string} dateStr 当前交易日
+     * @param {Object} schemes buildSchemes结果
+     */
+    function renderSchemeBody(bodyBox, day, dateStr, schemes) {
+        if (!bodyBox) return;
+        const id = activeSchemeId;
+        const scores = scoresForScheme(id, schemes, day, dateStr);
+        const top5 = scores.top5 || [];
+        const weights = scores.weights || {};
+        const isCustomView = id === 'current'
+            && (() => {
+                const saved = FupanScoring.getSavedConfig();
+                return saved && !FupanScoring.isDefaultConfig(saved) && FupanScoring.isActiveFor(saved, dateStr);
+            })();
+
+        // 1. 方案信息条
+        const info = schemeInfoHtml(id, schemes, dateStr);
+
+        // 2. Top5卡片（龙虎榜信息从ztpool按code关联）
+        const lhbByCode = new Map(
+            ((day.ztpool) || []).filter(x => x.lhb).map(x => [x.code, x.lhb]));
         const cardsHtml = top5.length
-            ? `<div class="fp-top5-row">${top5.map((s, i) => top5Card(s, weights, i)).join('')}</div>`
+            ? `<h4 class="fp-chart-title">Top5 关注标的（次日竞价参考）</h4>
+               <div class="fp-top5-row">${top5.map((s, i) => top5Card(s, weights, i, lhbByCode.get(s.code))).join('')}</div>`
             : '<div class="fp-empty">当日无评分标的</div>';
 
-        // 2. 全量评分表（all，被否决的标的带否决标记）
+        // 3. 全量评分表（被否决的标的带否决标记；龙虎榜列从ztpool关联）
         const allScores = scores.all || [];
         const allRows = allScores.map(s => `
             <tr>
@@ -1267,25 +1998,29 @@ const FupanRenderer = (function () {
                 <td class="col-code">${esc(s.code)}</td>
                 <td class="fp-score-total ${scoreClass(s.score)}">${s.score ?? '--'}</td>
                 <td>${s.probability !== null && s.probability !== undefined ? (s.probability * 100).toFixed(1) + '%' : '--'}</td>
+                <td data-v="${lhbByCode.has(s.code) && lhbByCode.get(s.code).onList ? (lhbByCode.get(s.code).netBuy || 0) : ''}">${lhbCell(lhbByCode.get(s.code))}</td>
                 <td>${s.veto ? `<span class="fp-veto-badge" title="${esc(s.veto)}">否决</span>` : '<span class="fp-pass-badge">通过</span>'}</td>
             </tr>`).join('');
         const allTable = allRows ? `
+            <h4 class="fp-chart-title">全量评分（${allScores.length}只）</h4>
             <div class="table-wrapper">
                 <table class="stock-table">
-                    <thead><tr><th>名称</th><th>代码</th><th>总分</th><th>晋级概率</th><th>否决</th></tr></thead>
+                    <thead><tr><th>名称</th><th>代码</th><th>总分</th><th>晋级概率</th><th title="龙虎榜净买额（亿元）">龙虎榜</th><th>否决</th></tr></thead>
                     <tbody>${allRows}</tbody>
                 </table>
             </div>` : '<div class="fp-empty">暂无数据</div>';
 
-        // 3. 模型说明（8维权重，自定义生效时展示自定义权重）
+        // 4. 模型说明（权重随选中方案联动）
+        const dimCount = Object.keys(SCORE_DIM_LABELS).length;
         const weightRows = Object.keys(SCORE_DIM_LABELS).map(k => `
             <tr><td>${SCORE_DIM_LABELS[k]}</td><td>${weights[k] ?? '--'}</td></tr>`).join('');
         const weightSum = Object.keys(SCORE_DIM_LABELS)
             .reduce((a, k) => a + (Number(weights[k]) || 0), 0);
         const modelHtml = `
+            <h4 class="fp-chart-title">模型说明</h4>
             <div class="fp-model-row">
                 <div class="fp-model-weights">
-                    <h4 class="fp-chart-title">8维权重（满分${weightSum}）${active ? '<span class="fp-custom-badge">自定义</span>' : ''}</h4>
+                    <h4 class="fp-chart-title">${dimCount}维权重（满分${weightSum}）${isCustomView ? '<span class="fp-custom-badge">自定义</span>' : ''}</h4>
                     <div class="table-wrapper">
                         <table class="stock-table">
                             <thead><tr><th>维度</th><th>满分</th></tr></thead>
@@ -1296,52 +2031,104 @@ const FupanRenderer = (function () {
                 <div class="fp-model-desc">
                     <h4 class="fp-chart-title">评分说明</h4>
                     <ul class="fp-model-tips">
-                        <li>评分为收盘后基于当日涨停数据的静态计算，供次日竞价参考</li>
+                        <li>评分为收盘后基于当日涨停数据+龙虎榜的静态计算，供次日竞价参考</li>
                         <li>涨停活跃度：近40自然日涨停次数越多得分越高（资金记忆）</li>
-                        <li>封板质量：封成比、首封时间、开板次数综合（权重最高20分）</li>
+                        <li>封板质量：封成比、首封时间、开板次数综合（权重最高18分）</li>
+                        <li>龙虎榜（v2新增）：上榜净买强度+席位画像（机构净买加分/拉萨散户接盘减分），未上榜中性9分</li>
                         <li>一票否决：触发性价比过低、情绪冰点加速等条件时直接否决</li>
                         <li>晋级概率：基于评分与同板级历史晋级率的估算，非精确预测</li>
-                        <li>阈值自定义：点击"阈值设置"可调整维度权重/否决阈值/建议分级，自生效日起前端重算，生效日之前保留采集端评分</li>
+                        <li>预测回溯（TODO13.2）：昨日/3日/5日最准方案按历史预测vs实际结果自动调权，可一键设为当前方案</li>
+                        <li>阈值自定义：点击"阈值设置"可微调当前方案，自生效日起前端重算，生效日之前保留采集端评分</li>
                     </ul>
                 </div>
             </div>`;
 
-        container.innerHTML = `
-            ${configBanner}
-            <div class="fp-score-toolbar">
-                <button class="fp-cfg-toggle" data-fp-cfg-toggle>⚙ 阈值设置</button>
-            </div>
-            <div data-fp-cfg-panel style="display:none"></div>
-            ${section('Top5 关注标的（次日竞价参考）', cardsHtml)}
-            ${section('全量评分（' + allScores.length + '只）', allTable)}
-            ${section('近5日回测（Top5晋级正确率）', '<div data-fp-backtest><div class="fp-empty">回测计算中...</div></div>')}
-            ${section('模型说明', modelHtml)}`;
-
-        bindSortTables(container);
+        bodyBox.innerHTML = info + cardsHtml + allTable + modelHtml;
 
         // Top5卡片雷达图挂载（卡片模板中预留容器）
-        container.querySelectorAll('[data-fp-radar]').forEach(box => {
+        bodyBox.querySelectorAll('[data-fp-radar]').forEach(box => {
             const idx = parseInt(box.dataset.fpRadar);
             const s = top5[idx];
             if (s) box.appendChild(radarFor(s, weights));
         });
+        bindSortTables(bodyBox);
+    }
 
-        // 阈值设置面板（展开状态持久化）
-        const panel = container.querySelector('[data-fp-cfg-panel]');
-        if (FupanData.getSetting('fupan_score_cfg_open', false)) panel.style.display = '';
-        await renderCfgPanel(panel, container, day, dateStr);
-        container.querySelector('[data-fp-cfg-toggle]').addEventListener('click', () => {
-            const show = panel.style.display === 'none';
-            panel.style.display = show ? '' : 'none';
-            FupanData.setSetting('fupan_score_cfg_open', show);
-        });
-
-        // 近5日回测（异步：保存阈值后此处展示对近5个交易日预测正确率的影响）
-        renderBacktest(container.querySelector('[data-fp-backtest]'), dateStr)
-            .catch(e => {
-                const box = container.querySelector('[data-fp-backtest]');
-                if (box) box.innerHTML = `<div class="error"><span>回测计算失败: ${esc(e.message)}</span></div>`;
+    /**
+     * 方案对比表（5方案 × 昨日/近3日/近5日窗口Top5命中率，各窗口最高值金色高亮）
+     * @param {HTMLElement} box 容器
+     * @param {Object} schemes buildSchemes结果
+     */
+    function renderSchemeCompare(box, schemes) {
+        if (!box) return;
+        const S = schemes.schemes;
+        const ids = ['current', 'ybest', 'd3best', 'd5best', 'initial'].filter(id => S[id]);
+        const wins = [['d1', '昨日窗口'], ['d3', '近3日窗口'], ['d5', '近5日窗口']];
+        // 各窗口最高命中率（并列最高均高亮）
+        const best = {};
+        wins.forEach(([w]) => {
+            let m = -1;
+            ids.forEach(id => {
+                const r = S[id].acc[w] && S[id].acc[w].rate;
+                if (r !== null && r !== undefined && r > m) m = r;
             });
+            best[w] = m;
+        });
+        const cell = (sc, w) => {
+            const a = sc && sc.acc[w];
+            if (!a || a.rate === null) return '<td>--</td>';
+            const isBest = best[w] > -1 && Math.abs(a.rate - best[w]) < 1e-9;
+            return `<td class="${isBest ? 'fp-cmp-best' : ''}">${a.hits}/${a.total}（${Math.round(a.rate * 100)}%）</td>`;
+        };
+        const rows = ids.map(id => `
+            <tr>
+                <td>${esc(SCHEME_LABELS[id])}</td>
+                ${wins.map(([w]) => cell(S[id], w)).join('')}
+            </tr>`).join('');
+        box.innerHTML = `
+            <h4 class="fp-chart-title">方案对比（Top5晋级命中率，金色=该窗口最优）</h4>
+            <div class="table-wrapper">
+                <table class="stock-table">
+                    <thead><tr><th>方案</th><th>昨日窗口</th><th>近3日窗口</th><th>近5日窗口</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>`;
+        bindSortTables(box);
+    }
+
+    /**
+     * 绑定方案操作按钮（设为当前方案/恢复为初始方案，均二次确认，TODO13.2.4）
+     * @param {HTMLElement} container tab容器
+     * @param {Object} day 单日数据
+     * @param {string} dateStr 当前交易日
+     * @param {Object} schemes buildSchemes结果
+     */
+    function bindSchemeActions(container, day, dateStr, schemes) {
+        const S = schemes.schemes;
+        container.querySelectorAll('[data-scheme-apply]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const id = btn.dataset.schemeId;
+                const sc = S[id];
+                if (!sc) return;
+                if (!window.confirm('将「' + SCHEME_LABELS[id] + '」方案设为当前方案？\n'
+                    + '生效日期：' + dateStr + '（生效日之前的评分展示不受影响）')) return;
+                if (id === 'initial') {
+                    FupanScoring.clearConfig();   // 初始方案=清除自定义配置
+                } else {
+                    FupanScoring.saveConfig(FupanScoring.cloneConfig(
+                        Object.assign({}, sc.config, { effectiveDate: dateStr })));
+                }
+                FupanData.setSetting('fupan_score_cfg_open', false);
+                renderScore(container, day, dateStr);
+            });
+        });
+        const resetBtn = container.querySelector('[data-scheme-reset]');
+        if (resetBtn) resetBtn.addEventListener('click', () => {
+            if (!window.confirm('恢复为初始方案将清除已保存的自定义阈值，确定？')) return;
+            FupanScoring.clearConfig();
+            FupanData.setSetting('fupan_score_cfg_open', false);
+            renderScore(container, day, dateStr);
+        });
     }
 
     /**
@@ -1556,13 +2343,14 @@ const FupanRenderer = (function () {
     }
 
     /**
-     * 生成Top5卡片HTML（雷达图占位，渲染后挂载）
+     * 生成Top5卡片HTML（雷达图占位，渲染后挂载；上榜股附龙虎榜信息行）
      * @param {Object} s top5标的
      * @param {Object} weights 权重
      * @param {number} idx 序号（0起，data-fp-radar对应）
+     * @param {Object|null} [lhb] 涨停股龙虎榜字段（ztpool关联，未上榜为null）
      * @returns {string} 卡片HTML
      */
-    function top5Card(s, weights, idx) {
+    function top5Card(s, weights, idx, lhb) {
         const dims = s.score.dimensions || {};
         const probPct = s.probability !== null && s.probability !== undefined ? (s.probability * 100).toFixed(1) : '--';
         return `
@@ -1577,6 +2365,7 @@ const FupanRenderer = (function () {
                     ${typeBadge(s.limitType)}
                     <span class="fp-industry">${esc(s.industry || '--')}</span>
                 </div>
+                ${top5LhbHtml(lhb)}
                 <div class="fp-top5-score-row">
                     <div class="fp-top5-score">
                         <span class="fp-score-big ${scoreClass(s.score.total)}">${s.score.total}</span>
@@ -1593,7 +2382,7 @@ const FupanRenderer = (function () {
     }
 
     /**
-     * 生成评分雷达图（8维度值/满分归一化）
+     * 生成评分雷达图（维度值/满分归一化，维度数随SCORE_DIM_LABELS动态）
      * @param {Object} s top5标的
      * @param {Object} weights 权重
      * @returns {SVGElement} 雷达图

@@ -1413,6 +1413,52 @@ body.embedded .app-layout {
     border: 1px solid rgba(16, 185, 129, 0.25);
 }
 
+/* 龙虎榜（TODO13.1）：Top5卡片信息行 + 池表格列 */
+.fp-top5-lhb {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+    font-size: 12px;
+}
+
+.fp-lhb-badge {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    background: rgba(245, 158, 11, 0.14);
+    color: #f59e0b;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.fp-lhb-ratio {
+    color: #94a3b8;
+}
+
+.fp-lhb-style {
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    background: rgba(139, 92, 246, 0.12);
+    color: #a78bfa;
+}
+
+.fp-lhb-interp {
+    color: #94a3b8;
+    font-size: 11px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fp-lhb-off {
+    color: #64748b;
+}
+
 /* 评分模型说明 */
 .fp-model-row {
     display: grid;
@@ -2056,6 +2102,276 @@ tr.fp-cat-selected td.fp-cat-name {
 
 .fp-bt-miss {
     color: #94a3b8;
+}
+
+/* ===== 评分预测：预测回溯方案区（TODO13.2） ===== */
+
+/* 本日预测准确率行 */
+.fp-acc-line {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    align-items: baseline;
+    font-size: 12px;
+    color: #94a3b8;
+    margin-bottom: 10px;
+}
+
+.fp-acc-line b {
+    color: #e2e8f0;
+}
+
+/* 方案tab栏 */
+[data-fp-scheme-tabs] {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+
+.fp-scheme-tab {
+    padding: 6px 14px;
+    border: 1px solid #334155;
+    border-radius: 18px;
+    background: #1e293b;
+    color: #94a3b8;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.fp-scheme-tab:hover {
+    border-color: #3b82f6;
+    color: #e2e8f0;
+}
+
+.fp-scheme-tab.active {
+    background: rgba(59, 130, 246, 0.18);
+    border-color: #3b82f6;
+    color: #93c5fd;
+}
+
+/* tab上的命中率徽标 */
+.fp-scheme-tab i {
+    font-style: normal;
+    font-size: 11px;
+    color: #fbbf24;
+}
+
+/* tab上的"=昨日最准"徽标 */
+.fp-scheme-tab em {
+    font-style: normal;
+    font-size: 10px;
+    padding: 0 5px;
+    border-radius: 8px;
+    background: rgba(251, 191, 36, 0.14);
+    color: #fbbf24;
+    border: 1px solid rgba(251, 191, 36, 0.3);
+}
+
+/* 方案信息条（描述+命中率+操作按钮） */
+.fp-scheme-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 10px 14px;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    background: #1e293b;
+    margin-bottom: 12px;
+}
+
+.fp-scheme-desc {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: baseline;
+    font-size: 12px;
+    color: #94a3b8;
+}
+
+.fp-scheme-desc b {
+    font-size: 13px;
+    color: #f8fafc;
+}
+
+.fp-scheme-sub {
+    font-size: 11px;
+    color: #64748b;
+}
+
+.fp-scheme-acc {
+    color: #cbd5e1;
+}
+
+.fp-scheme-eq {
+    padding: 1px 7px;
+    border-radius: 8px;
+    font-size: 10px;
+    background: rgba(251, 191, 36, 0.14);
+    color: #fbbf24;
+    border: 1px solid rgba(251, 191, 36, 0.3);
+}
+
+/* 方案操作按钮（设为当前方案/恢复为初始方案） */
+.fp-scheme-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.fp-scheme-btn {
+    padding: 6px 14px;
+    border: 1px solid rgba(59, 130, 246, 0.45);
+    border-radius: 6px;
+    background: rgba(59, 130, 246, 0.12);
+    color: #93c5fd;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.fp-scheme-btn:hover {
+    background: rgba(59, 130, 246, 0.22);
+    color: #bfdbfe;
+}
+
+/* 方案对比表：该窗口最优单元格金色高亮 */
+.fp-cmp-best {
+    color: #fbbf24;
+    font-weight: 700;
+    background: rgba(251, 191, 36, 0.08);
+}
+
+/* ===== 涨跌停：最高板模式周期表（TODO14） ===== */
+
+/* 工具行：区间摘要 + 统计区间选择 */
+.fp-mb-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+
+.fp-mb-range {
+    font-size: 13px;
+    font-weight: 600;
+    color: #cbd5e1;
+}
+
+.fp-mb-range .fp-empty {
+    display: inline;
+    padding: 2px 10px;
+    font-size: 12px;
+    font-weight: 400;
+}
+
+.fp-mb-period {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #94a3b8;
+}
+
+.fp-mb-period select {
+    padding: 4px 8px;
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    color: #e2e8f0;
+    font-size: 12px;
+    outline: none;
+    cursor: pointer;
+}
+
+.fp-mb-period select:hover {
+    border-color: #475569;
+}
+
+.fp-mb-period select:focus {
+    border-color: #3b82f6;
+}
+
+/* 周期表：日期列+板数列窄格，横向滚动 */
+.fp-mb-wrap {
+    overflow-x: auto;
+}
+
+.fp-mb-table th,
+.fp-mb-table td {
+    white-space: nowrap;
+}
+
+.fp-mb-date {
+    font-weight: 600;
+    color: #cbd5e1;
+}
+
+.fp-mb-num {
+    color: #cbd5e1;
+}
+
+.fp-mb-flat {
+    color: #475569;
+    font-size: 11px;
+}
+
+.fp-mb-cell {
+    min-width: 64px;
+    vertical-align: top;
+}
+
+/* 股票徽标（同股票全周期同色，样式内联注入配色） */
+.fp-mb-stock {
+    display: inline-block;
+    padding: 2px 8px;
+    margin: 1px 2px;
+    border-radius: 5px;
+    border: 1px solid;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.5;
+}
+
+.fp-mb-stock a {
+    color: inherit;
+    text-decoration: none;
+}
+
+.fp-mb-stock a:hover {
+    text-decoration: underline;
+}
+
+/* 当日最高板：金框高亮 */
+.fp-mb-stock.fp-mb-max {
+    border-color: #fbbf24 !important;
+    box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.55) inset;
+    font-weight: 700;
+}
+
+/* 2板以上晋级率小字 */
+.fp-mb-rate {
+    display: block;
+    font-size: 10px;
+    color: #64748b;
+    margin-top: 2px;
+}
+
+/* 脚注口径说明 */
+.fp-mb-note {
+    font-size: 11px;
+    color: #64748b;
+    margin: 8px 0 0;
+    line-height: 1.7;
 }
 
 /* 窄屏：分类栏不再侧置 */

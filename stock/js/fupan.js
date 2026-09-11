@@ -35,6 +35,7 @@ const Fupan = (function () {
     let loading = false;          // 加载中（防重入）
     let currentDate = null;       // 当前展示的交易日 YYYY-MM-DD
     let currentSub = 'market';    // 当前子tab
+    let pendingDate = null;       // URL指定的预置日期（onTabActivated前由main.js设置）
 
     // DOM引用（init时缓存）
     let datePicker, loadingEl, loadingText, errorEl, errorText;
@@ -84,7 +85,7 @@ const Fupan = (function () {
 
     /**
      * 加载指定交易日数据并渲染当前子tab
-     * 主流程：置加载态 → 取day数据 → 填充日期元信息 → 渲染当前子tab
+     * 主流程：置加载态 → 取day数据 → 填充日期元信息 → 渲染当前子tab → 上报URL同步
      * @param {string} date 交易日 YYYY-MM-DD
      * @param {boolean} force 是否强制刷新（跳过缓存）
      */
@@ -98,6 +99,8 @@ const Fupan = (function () {
             renderSub(currentSub, day);
             updateMeta(day);
             hideLoading();
+            // TODO12：日期变化上报（URL hash同步 ?date=xxx）
+            reportSubChange(date);
         } catch (e) {
             console.error('复盘数据加载失败:', e);
             showError('复盘数据加载失败: ' + e.message + '（当日采集可能未完成，可稍后刷新重试）');
@@ -135,19 +138,21 @@ const Fupan = (function () {
 
     /**
      * 初始化日期下拉（可选项=summary可用交易日，倒序最新在前）
-     * @param {string} [preferred] 优先选中的日期
+     * @param {string} [preferred] 优先选中的日期（URL date参数预置 > 默认最新）
      */
     async function initDatePicker(preferred) {
         const dates = await FupanData.getAvailableDates();
         if (!dates.length) {
             showError('暂无复盘数据：请等待私有仓库 fupan-data 工作流完成首次采集');
-            return;
+            return null;
         }
         // 倒序填充（最新在前）
         datePicker.innerHTML = dates.slice().reverse()
             .map(d => `<option value="${d}">${d.slice(5).replace('-', '/')}（${weekdayLabel(d)}）</option>`)
             .join('');
-        datePicker.value = preferred && dates.includes(preferred) ? preferred : dates[dates.length - 1];
+        const target = preferred && dates.includes(preferred) ? preferred : dates[dates.length - 1];
+        datePicker.value = target;
+        return target;
     }
 
     /**
@@ -163,8 +168,18 @@ const Fupan = (function () {
     // ===== 子tab切换 =====
 
     /**
+     * 上报子tab/日期变化（main.js监听后同步URL hash，TODO12）
+     * @param {string|null} [date] 当前交易日（复盘页带date参数）
+     */
+    function reportSubChange(date) {
+        document.dispatchEvent(new CustomEvent('dailystock:subchange', {
+            detail: { page: 'fupan', sub: currentSub, date: date === undefined ? currentDate : date }
+        }));
+    }
+
+    /**
      * 切换子tab
-     * 主流程：按钮高亮 → 面板显隐 → 若已加载数据则重渲染该tab（面板innerHTML每次重建）
+     * 主流程：按钮高亮 → 面板显隐 → 若已加载数据则重渲染该tab（面板innerHTML每次重建）→ 上报URL同步
      * @param {string} sub 子tab标识
      */
     function switchSub(sub) {
@@ -189,6 +204,8 @@ const Fupan = (function () {
         try {
             localStorage.setItem(ACTIVE_SUB_KEY, sub);
         } catch (e) { /* 忽略 */ }
+        // TODO12：上报子tab变化（URL hash同步 #/fupan/{sub}?date=...）
+        reportSubChange();
     }
 
     // ===== 手动采集入口 =====
@@ -351,12 +368,12 @@ const Fupan = (function () {
         if (!SUB_TABS[saved]) saved = 'market';
         switchSub(saved);
 
-        // 主流程：初始化日期下拉 → 加载最新交易日
+        // 主流程：初始化日期下拉（URL预置日期优先）→ 加载对应交易日
         (async () => {
             try {
-                await initDatePicker();
-                const latest = await FupanData.getLatestDate();
-                loadDate(latest);
+                const target = await initDatePicker(pendingDate);
+                pendingDate = null;
+                if (target) loadDate(target);
             } catch (e) {
                 showError('复盘数据初始化失败: ' + e.message);
             }
@@ -364,7 +381,7 @@ const Fupan = (function () {
     }
 
     /**
-     * 外部URL参数直接指定子tab（?page=fupan&sub=zt）
+     * 外部URL参数直接指定子tab（?page=fupan&sub=zt 或 #/fupan/zt）
      * 在onTabActivated之前由main.js调用，激活时生效
      * @param {string} sub 子tab标识
      */
@@ -374,5 +391,16 @@ const Fupan = (function () {
         }
     }
 
-    return { onTabActivated, presetSub };
+    /**
+     * 外部URL参数直接指定交易日（#/fupan/zt?date=2026-09-11）
+     * 在onTabActivated之前由main.js调用，初始化日期下拉时生效
+     * @param {string} date 交易日 YYYY-MM-DD
+     */
+    function presetDate(date) {
+        if (/^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))) {
+            pendingDate = date;
+        }
+    }
+
+    return { onTabActivated, presetSub, presetDate, switchSub };
 })();

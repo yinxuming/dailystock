@@ -425,7 +425,7 @@ const Watchlist = (function () {
 
     /**
      * 切换二级菜单（异动风险/普通浏览）
-     * 主流程：更新UI状态 → 视图未加载过或强制刷新时加载数据（懒加载）
+     * 主流程：更新UI状态 → 视图未加载过或强制刷新时加载数据（懒加载）→ 上报URL同步
      * @param {string} sub - risk|browse
      * @param {boolean} forceRefresh - 是否强制刷新
      */
@@ -435,6 +435,10 @@ const Watchlist = (function () {
         if (forceRefresh || !viewLoaded[sub]) {
             refreshCurrentView(forceRefresh);
         }
+        // TODO12：上报子tab变化（main.js同步URL hash #/watchlist/{sub}）
+        document.dispatchEvent(new CustomEvent('dailystock:subchange', {
+            detail: { page: 'watchlist', sub }
+        }));
     }
 
     /**
@@ -1083,6 +1087,16 @@ const Watchlist = (function () {
     return {
         init,
         onTabActivated,
+        /**
+         * URL 指定二级子tab（?page=watchlist&sub=browse）
+         * 在 onTabActivated 之前由 main.js 调用，激活时从 localStorage 读取生效
+         * @param {string} sub - risk|browse
+         */
+        presetSub(sub) {
+            if (sub === 'risk' || sub === 'browse') {
+                try { localStorage.setItem(SUBTAB_KEY, sub); } catch (e) { /* 忽略 */ }
+            }
+        },
         // 数据操作（供外部/测试调用）
         getList,
         addStock,

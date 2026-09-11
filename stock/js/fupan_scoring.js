@@ -2,33 +2,39 @@
  * 复盘评分模型前端移植（FupanScoring）
  *
  * 职责：
- * 1. 后端 fupan/scoring.py 评分模型的JS移植（8维评分 + 一票否决 + 晋级概率 + 操作建议）
+ * 1. 后端 fupan/scoring.py 评分模型的JS移植（9维评分 + 一票否决 + 晋级概率 + 操作建议）
  *    - 默认参数与后端完全一致：默认配置下 rescoreDay 重算结果与采集端落盘评分一致
  * 2. 阈值自定义（TODO5.5）：维度权重 / 一票否决阈值 / 建议分级阈值可通过页面设置调整
  * 3. 生效日期机制：仅对生效日及之后的交易日前端重算评分；
  *    生效日之前的历史评分保持采集端落盘结果（历史评分不受影响）
  * 4. 配置持久化：localStorage 保存，跨会话生效（复用 FupanData 设置工具）
+ * 5. 预测回溯方案调优（TODO13.2）：evalSchemeAccuracy 回测Top5命中率、
+ *    optimizeScheme 权重爬山调优（昨日/3日/5日最准方案）、configsEqual 方案一致性判定
  *
  * 设计说明：
  * - 维度权重调整时，各维原始分按 默认满分→新满分 等比折算（权重=默认时原样返回，
  *   保证默认配置与后端逐分一致）
  * - 晋级概率的30日历史基线仅采集端可得：前端从落盘的（概率-评分）反推该股基线，
  *   仅评分变化项随之调整，默认配置下概率与后端一致
+ * - 模型版本：v2=9维（TODO13.1新增龙虎榜lhb维度，各维满分重新分配，总分仍100）；
+ *   v1历史落盘数据（8维）展示采集端原始评分不受影响
+ * - 方案调优为确定性算法（固定维度顺序+固定步长），同一数据集结果可复现
  */
 const FupanScoring = (function () {
 
     // ===== 默认配置（与后端 scoring.py / fetch.py 对齐） =====
 
-    // 8维权重（默认满分，合计100）
+    // 9维权重（默认满分，合计100；v2新增lhb龙虎榜维度）
     const DEFAULT_WEIGHTS = {
         priceLevel: 5,
         floatMV: 10,
-        ztActivity: 15,
-        sectorEffect: 15,
-        sealQuality: 20,
-        boardType: 15,
-        position: 10,
-        sentiment: 10
+        ztActivity: 12,
+        sectorEffect: 12,
+        sealQuality: 18,
+        boardType: 12,
+        position: 8,
+        sentiment: 8,
+        lhb: 15
     };
 
     // 一票否决阈值（数值0或时刻留空 = 关闭该项）
@@ -50,11 +56,11 @@ const FupanScoring = (function () {
     // 配置持久化key
     const STORE_KEY = 'fupan_score_config';
 
-    // 板类型强度分（默认板型权重15分制，与后端一致）
-    const BOARD_TYPE_SCORE = { '一字板': 15, 'T字板': 12, '换手板': 10, '回封板': 6, '厂字板': 6 };
+    // 板类型强度分（默认板型权重12分制，与后端一致）
+    const BOARD_TYPE_SCORE = { '一字板': 12, 'T字板': 10, '换手板': 8, '回封板': 5, '厂字板': 5 };
 
-    // 情绪阶段环境分（默认情绪权重10分制，与后端一致）
-    const SENTIMENT_SCORE = { '高潮': 10, '发酵': 8, '回暖': 6, '退潮': 3, '冰点': 1 };
+    // 情绪阶段环境分（默认情绪权重8分制，与后端一致）
+    const SENTIMENT_SCORE = { '高潮': 8, '发酵': 6.5, '回暖': 5, '退潮': 2.5, '冰点': 1 };
 
     // ===== 内部工具 =====
 
@@ -79,7 +85,7 @@ const FupanScoring = (function () {
         return Math.max(-0.15, Math.min(0.15, x));
     }
 
-    // ===== 8维原始分（默认分制，与后端scoring.py逐条对齐） =====
+    // ===== 9维原始分（默认分制，与后端scoring.py逐条对齐） =====
 
     /**
      * 股价水平原始分（满分5）：低价股更易资金合力
@@ -110,34 +116,34 @@ const FupanScoring = (function () {
     }
 
     /**
-     * 近期涨停活跃原始分（满分15）：妖股基因（无历史数据给基准分7）
+     * 近期涨停活跃原始分（满分12）：妖股基因（无历史数据给中性基准分）
      * @param {number|null} recentZt 近期涨停次数（null=无历史数据）
      * @returns {number}
      */
     function rawZtActivity(recentZt) {
-        if (recentZt === null || recentZt === undefined) return 7;
-        if (recentZt >= 5) return 15;
-        if (recentZt >= 3) return 12;
-        if (recentZt === 2) return 9;
-        if (recentZt === 1) return 6;
-        return 3;
+        if (recentZt === null || recentZt === undefined) return 5.5;
+        if (recentZt >= 5) return 12;
+        if (recentZt >= 3) return 10;
+        if (recentZt === 2) return 7;
+        if (recentZt === 1) return 5;
+        return 2;
     }
 
     /**
-     * 板块效应原始分（满分15）：同板块涨停家数（含自身）
+     * 板块效应原始分（满分12）：同板块涨停家数（含自身）
      * @param {number} sectorZtCount 同行业今日涨停家数
      * @returns {number}
      */
     function rawSectorEffect(sectorZtCount) {
-        if (!sectorZtCount) return 4;
-        if (sectorZtCount >= 5) return 15;
-        if (sectorZtCount >= 3) return 12;
-        if (sectorZtCount === 2) return 8;
-        return 4;
+        if (!sectorZtCount) return 3;
+        if (sectorZtCount >= 5) return 12;
+        if (sectorZtCount >= 3) return 10;
+        if (sectorZtCount === 2) return 6.5;
+        return 3;
     }
 
     /**
-     * 封板质量原始分（满分20）：封板时间(12) + 封成比(5) + 炸板(3)
+     * 封板质量原始分（满分18）：封板时间(11) + 封成比(4) + 炸板(3)
      * @param {number|null} sealR 封成比
      * @param {string} firstSeal 首次封板时刻
      * @param {number|null} openCount 炸板次数
@@ -147,19 +153,19 @@ const FupanScoring = (function () {
         // 首次封板时间分（越早越强）
         const s = toSecs(firstSeal);
         let timeScore;
-        if (s === null) timeScore = 5;
-        else if (s <= 9 * 3600 + 25 * 60) timeScore = 12;        // 09:25 集合竞价封板
-        else if (s <= 10 * 3600) timeScore = 10;                 // 10:00 前
-        else if (s <= 11 * 3600 + 30 * 60) timeScore = 7;        // 上午
-        else if (s <= 14 * 3600) timeScore = 5;                  // 午后
-        else timeScore = 2;                                      // 尾盘
+        if (s === null) timeScore = 4.5;
+        else if (s <= 9 * 3600 + 25 * 60) timeScore = 11;        // 09:25 集合竞价封板
+        else if (s <= 10 * 3600) timeScore = 9;                  // 10:00 前
+        else if (s <= 11 * 3600 + 30 * 60) timeScore = 6.5;      // 上午
+        else if (s <= 14 * 3600) timeScore = 4.5;                // 午后
+        else timeScore = 1.5;                                    // 尾盘
 
         // 封成比分（封板资金/成交额）
         let ratioScore;
-        if (sealR === null || sealR === undefined) ratioScore = 2.5;
-        else if (sealR >= 1) ratioScore = 5;
-        else if (sealR >= 0.5) ratioScore = 4;
-        else if (sealR >= 0.2) ratioScore = 3;
+        if (sealR === null || sealR === undefined) ratioScore = 2;
+        else if (sealR >= 1) ratioScore = 4;
+        else if (sealR >= 0.5) ratioScore = 3.5;
+        else if (sealR >= 0.2) ratioScore = 2.5;
         else ratioScore = 1;
 
         // 炸板次数分
@@ -172,36 +178,61 @@ const FupanScoring = (function () {
     }
 
     /**
-     * 板类型原始分（满分15）
+     * 板类型原始分（满分12）
      * @param {string} limitType 涨停板类型
      * @returns {number}
      */
     function rawBoardType(limitType) {
-        return BOARD_TYPE_SCORE[limitType] !== undefined ? BOARD_TYPE_SCORE[limitType] : 8;
+        return BOARD_TYPE_SCORE[limitType] !== undefined ? BOARD_TYPE_SCORE[limitType] : 6.5;
     }
 
     /**
-     * 板块身位原始分（满分10）：板块内最高板满分，首板看板块热度
+     * 板块身位原始分（满分8）：板块内最高板满分，首板看板块热度
      * @param {number} lbCount 连板数
      * @param {number} sectorMaxLb 同行业今日最高连板
      * @param {number} sectorZtCount 同行业涨停家数
      * @returns {number}
      */
     function rawPosition(lbCount, sectorMaxLb, sectorZtCount) {
-        if (sectorMaxLb && lbCount && lbCount >= sectorMaxLb) return 10;
-        if (lbCount && sectorMaxLb && lbCount === sectorMaxLb - 1) return 8;
-        if (lbCount && lbCount >= 2) return 6;
-        if (sectorZtCount && sectorZtCount >= 3) return 5;  // 热板块首板
-        return 3;
+        if (sectorMaxLb && lbCount && lbCount >= sectorMaxLb) return 8;
+        if (lbCount && sectorMaxLb && lbCount === sectorMaxLb - 1) return 6.5;
+        if (lbCount && lbCount >= 2) return 5;
+        if (sectorZtCount && sectorZtCount >= 3) return 4;  // 热板块首板
+        return 2.5;
     }
 
     /**
-     * 情绪环境原始分（满分10）
+     * 情绪环境原始分（满分8）
      * @param {string} phase 情绪阶段
      * @returns {number}
      */
     function rawSentiment(phase) {
-        return SENTIMENT_SCORE[phase] !== undefined ? SENTIMENT_SCORE[phase] : 5;
+        return SENTIMENT_SCORE[phase] !== undefined ? SENTIMENT_SCORE[phase] : 4;
+    }
+
+    /**
+     * 龙虎榜资金质量原始分（满分15，TODO13.1，与后端 _score_lhb 逐条对齐）
+     * 未上榜=9中性；上榜=基础7+净买强度+席位画像加减
+     * @param {Object|null} lhb 涨停股lhb字段（含onList/netBuyRatio/style）
+     * @returns {number}
+     */
+    function rawLhb(lhb) {
+        if (!lhb || !lhb.onList) return 9;
+        let score = 7;
+        const ratio = lhb.netBuyRatio;
+        if (ratio === null || ratio === undefined) score += 1;
+        else if (ratio >= 10) score += 4;
+        else if (ratio >= 5) score += 3;
+        else if (ratio > 0) score += 2;
+        else if (ratio > -5) score -= 2;
+        else score -= 4;
+        const style = lhb.style || {};
+        const instNet = style.instNet || 0;
+        if (instNet > 0) score += 2;
+        else if (instNet < 0) score -= 2;
+        if ((style.patternNet || 0) > 0) score += 2;
+        if ((style.retailBuyRatio || 0) >= 0.4) score -= 2;
+        return Math.round(Math.max(0, Math.min(15, score)) * 10) / 10;
     }
 
     // ===== 评分核心 =====
@@ -250,8 +281,8 @@ const FupanScoring = (function () {
     }
 
     /**
-     * 单只涨停股8维评分（前端重算版）
-     * @param {Object} stock 涨停股（ztpool元素）
+     * 单只涨停股9维评分（前端重算版，v2含龙虎榜维度）
+     * @param {Object} stock 涨停股（ztpool元素，含lhb字段）
      * @param {number} sectorZtCount 同行业今日涨停家数（含自身）
      * @param {number} sectorMaxLb 同行业今日最高连板数
      * @param {string} phase 当日情绪阶段
@@ -270,7 +301,8 @@ const FupanScoring = (function () {
                 rawSealQuality(stock.sealRatio, stock.firstSealTime, stock.openCount), w),
             boardType: scaleDim('boardType', rawBoardType(stock.limitType), w),
             position: scaleDim('position', rawPosition(stock.lbCount, sectorMaxLb, sectorZtCount), w),
-            sentiment: scaleDim('sentiment', rawSentiment(phase), w)
+            sentiment: scaleDim('sentiment', rawSentiment(phase), w),
+            lhb: scaleDim('lhb', rawLhb(stock.lhb), w)
         };
         let total = 0;
         Object.keys(dims).forEach(k => { total += dims[k]; });
@@ -372,11 +404,16 @@ const FupanScoring = (function () {
 
     /**
      * 读取已保存的阈值配置
+     * 兼容迁移：v1模型8维配置缺少lhb权重时，按默认值补齐（升级后旧配置自动生效新维度）
      * @returns {Object|null} 配置（未保存或结构不完整返回null）
      */
     function getSavedConfig() {
-        const c = FupanData.getSetting(STORE_KEY, null);
+        let c = FupanData.getSetting(STORE_KEY, null);
         if (!c || !c.weights || !c.veto || !c.advice || !c.effectiveDate) return null;
+        // 迁移：补齐缺失维度（v1→v2新增lhb）
+        Object.keys(DEFAULT_WEIGHTS).forEach(k => {
+            if (c.weights[k] === undefined) c.weights[k] = DEFAULT_WEIGHTS[k];
+        });
         return c;
     }
 
@@ -456,6 +493,119 @@ const FupanScoring = (function () {
         return { effectiveDate: raw.effectiveDate, weights, veto, advice };
     }
 
+    /**
+     * 生成默认配置对象（方案计算统一用；effectiveDate空=不启用前端重算）
+     * @returns {{effectiveDate:null, weights:Object, veto:Object, advice:Object}}
+     */
+    function defaultConfig() {
+        return {
+            effectiveDate: null,
+            weights: Object.assign({}, DEFAULT_WEIGHTS),
+            veto: Object.assign({}, DEFAULT_VETO),
+            advice: Object.assign({}, DEFAULT_ADVICE)
+        };
+    }
+
+    /**
+     * 两配置的模型参数是否一致（权重/否决/建议分级逐项相等；忽略生效日期）
+     * 用途：当前方案与"昨日最准"等自动方案的一致性判定（TODO13.2.4）
+     * @param {Object} a 配置A
+     * @param {Object} b 配置B
+     * @returns {boolean}
+     */
+    function configsEqual(a, b) {
+        if (!a || !b) return false;
+        const cmp = (x, y) => String(x) === String(y);
+        return Object.keys(DEFAULT_WEIGHTS).every(k => cmp((a.weights || {})[k], (b.weights || {})[k]))
+            && Object.keys(DEFAULT_VETO).every(k => cmp((a.veto || {})[k], (b.veto || {})[k]))
+            && Object.keys(DEFAULT_ADVICE).every(k => cmp((a.advice || {})[k], (b.advice || {})[k]));
+    }
+
+    /**
+     * 评估配置在回测周期上的Top5命中情况（TODO13.2预测回溯）
+     * 命中判定：预测日Top5标的在次日涨停池中且连板数更高（晋级成功）
+     * @param {Array<{day:Object, next:Object}>} cycles 回测周期（day=预测日数据，next=次日结果数据）
+     * @param {Object} config 评分配置
+     * @returns {{hits:number, total:number, rate:number|null}} 命中数/预测总数/命中率（total=0时rate=null）
+     */
+    function evalSchemeAccuracy(cycles, config) {
+        let hits = 0, total = 0;
+        (cycles || []).forEach(c => {
+            if (!c || !c.day || !c.next) return;
+            const ranked = rescoreDay(c.day, config);
+            (ranked.top5 || []).forEach(s => {
+                const ns = (c.next.ztpool || []).find(x => x.code === s.code);
+                total += 1;
+                if (ns && (ns.lbCount || 1) > (s.lbCount || 1)) hits += 1;
+            });
+        });
+        return { hits, total, rate: total ? hits / total : null };
+    }
+
+    /**
+     * 模型参数爬山调优（TODO13.2：根据T+1实际结果微调权重，确定性算法）
+     * 主流程：以base配置为起点 → 逐维尝试±2/±4权重微调 → 保留命中率提升最大的调整
+     *         → 最多3轮直至无改进；平手时取与base总偏差更小的配置（防过拟合大幅偏移）
+     * @param {Array<{day:Object, next:Object}>} cycles 回测周期（至少1个周期）
+     * @param {Object} baseConfig 起始配置（当前方案；veto/advice保持不变，仅调权重）
+     * @returns {{config:Object, accuracy:{hits:number,total:number,rate:number|null}}} 调优后配置与命中率
+     */
+    function optimizeScheme(cycles, baseConfig) {
+        const dims = Object.keys(DEFAULT_WEIGHTS);
+        const baseW = {};
+        dims.forEach(k => { baseW[k] = Number(baseConfig.weights[k]); });
+        const baseAcc = evalSchemeAccuracy(cycles, baseConfig);
+        // 无可评估数据（无周期/Top5全空）时原样返回，避免无意义调优
+        if (!cycles || !cycles.length || baseAcc.total === 0) {
+            return { config: cloneConfig(baseConfig), accuracy: baseAcc };
+        }
+        /**
+         * 权重与base的总偏差（平手时的次序偏好）
+         */
+        const devOf = w => dims.reduce((a, k) => a + Math.abs(w[k] - baseW[k]), 0);
+        let bestW = Object.assign({}, baseW);
+        let bestAcc = baseAcc;
+        let bestDev = 0;
+        const DELTAS = [-4, -2, 2, 4];
+        for (let round = 0; round < 3; round++) {
+            let improved = false;
+            dims.forEach(k => {
+                DELTAS.forEach(d => {
+                    const w = Object.assign({}, bestW);
+                    const v = Math.round(w[k] + d);
+                    if (v < 0 || v > 50 || v === w[k]) return;
+                    w[k] = v;
+                    const acc = evalSchemeAccuracy(cycles, Object.assign({}, baseConfig, { weights: w }));
+                    if (acc.total === 0) return;
+                    const dev = devOf(w);
+                    if (acc.rate > bestAcc.rate + 1e-9
+                        || (Math.abs(acc.rate - bestAcc.rate) <= 1e-9 && dev < bestDev)) {
+                        bestW = w; bestAcc = acc; bestDev = dev; improved = true;
+                    }
+                });
+            });
+            if (!improved) break;
+        }
+        return {
+            config: Object.assign({}, baseConfig, { weights: bestW }),
+            accuracy: bestAcc
+        };
+    }
+
+    /**
+     * 深拷贝配置（方案对象在会话内多处引用，避免相互污染）
+     * @param {Object} config 配置
+     * @returns {Object} 副本
+     */
+    function cloneConfig(config) {
+        return {
+            effectiveDate: config.effectiveDate || null,
+            weights: Object.assign({}, config.weights),
+            veto: Object.assign({}, config.veto),
+            advice: Object.assign({}, config.advice)
+        };
+    }
+
     return {
         // 默认配置（设置面板预填用）
         DEFAULT_WEIGHTS,
@@ -463,6 +613,12 @@ const FupanScoring = (function () {
         DEFAULT_ADVICE,
         // 评分重算
         rescoreDay,
+        // 方案调优（TODO13.2预测回溯）
+        defaultConfig,
+        configsEqual,
+        evalSchemeAccuracy,
+        optimizeScheme,
+        cloneConfig,
         // 配置管理
         getSavedConfig,
         saveConfig,

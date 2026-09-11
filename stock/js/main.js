@@ -416,7 +416,7 @@ const App = (function () {
 
     /**
      * 切换左侧菜单tab
-     * 主流程：更新菜单按钮态 → 切换页面显隐 → 通知懒加载模块 → 持久化tab状态
+     * 主流程：更新菜单按钮态 → 切换页面显隐 → 通知懒加载模块 → 持久化tab状态 → 同步URL hash
      * @param {string} tab - market|fupan|watchlist|settings
      */
     function switchTab(tab) {
@@ -442,27 +442,140 @@ const App = (function () {
         } catch (e) {
             console.warn('保存tab状态失败:', e);
         }
+        // TODO12：点击菜单对应不同URL（可收藏）；主tab切换压入历史支持前进/后退
+        if (routeState.page !== tab) {
+            routeState.page = tab;
+            routeState.sub = lastSubByPage[tab] || null;
+            if (tab !== 'fupan') routeState.date = null;
+        }
+        syncRouteHash(true);
+    }
+
+    // 各菜单支持的二级子tab（URL ?sub= 或 hash #/page/sub 均需命中此映射）
+    const VALID_SUB_TABS = {
+        fupan:     ['market', 'sectors', 'zt', 'score'],
+        watchlist: ['risk', 'browse'],
+        settings:  ['monitor', 'cache', 'proxy'],
+    };
+
+    // 当前路由状态（URL hash 同步用：点击菜单/子tab/切换日期后地址栏始终可收藏）
+    const routeState = { page: 'market', sub: null, date: null };
+    // 各主tab最近一次的子tab（切回主tab时hash带上，subchange事件更新）
+    const lastSubByPage = {};
+
+    /**
+     * 同步当前路由到地址栏hash（TODO12：点击菜单对应不同URL，可保存到收藏夹）
+     * 主tab切换用pushState（前进/后退可在tab间导航），子tab/日期变化用replaceState（不产生历史记录）
+     * @param {boolean} [push] true=压入历史记录（主tab切换），false=原地替换
+     */
+    function syncRouteHash(push) {
+        let hash = '#/' + routeState.page;
+        if (routeState.sub && VALID_SUB_TABS[routeState.page]
+            && VALID_SUB_TABS[routeState.page].includes(routeState.sub)) {
+            hash += '/' + routeState.sub;
+        }
+        if (routeState.page === 'fupan' && routeState.date) {
+            hash += '?date=' + encodeURIComponent(routeState.date);
+        }
+        try {
+            history[push ? 'pushState' : 'replaceState'](
+                null, '', location.pathname + location.search + hash);
+        } catch (e) { /* file://等场景可能受限，忽略 */ }
+    }
+
+    /**
+     * 应用路由：预置子tab/日期 → 切主tab → settings子tab直达
+     * initTabs初始加载与hashchange（手动改URL/前进后退）共用
+     * @param {{page:string, sub:string|null, date:string|null}} route parseRoute结果
+     */
+    function applyRoute(route) {
+        if (!route || !route.page) return;
+        // URL 指定子tab/日期 → 先预置到模块（switchTab激活模块时生效）
+        if (route.sub) {
+            if (route.page === 'fupan' && typeof Fupan !== 'undefined' && Fupan.presetSub) {
+                Fupan.presetSub(route.sub);
+            } else if (route.page === 'watchlist' && typeof Watchlist !== 'undefined' && Watchlist.presetSub) {
+                Watchlist.presetSub(route.sub);
+            }
+        }
+        if (route.date && route.page === 'fupan' && typeof Fupan !== 'undefined' && Fupan.presetDate) {
+            Fupan.presetDate(route.date);
+        }
+        routeState.page = route.page;
+        routeState.sub = route.sub || lastSubByPage[route.page] || null;
+        if (route.page !== 'fupan') routeState.date = null;
+        switchTab(route.page);
+        // settings 二级tab直达：复用initSettingsTabs已绑定的点击事件
+        if (route.page === 'settings' && route.sub && VALID_SUB_TABS.settings.includes(route.sub)) {
+            const btn = document.querySelector(`[data-settings-tab="${route.sub}"]`);
+            if (btn) btn.click();
+        }
+    }
+
+    /**
+     * 解析 URL 路由（同时兼容 query 参数和 hash 两种风格）
+     *  - query：   ?page=fupan&sub=zt&date=2026-09-11
+     *  - hash：    #/fupan/zt?date=2026-09-11（更干净，支持书签）
+     * hash 优先级高于 query（用户显式 bookmark 的 URL 不应被 query 覆盖）。
+     * @returns {{page: string, sub: string|null, date: string|null}}
+     */
+    function parseRoute() {
+        const validTabs = ['market', 'fupan', 'watchlist', 'settings'];
+        const params = new URLSearchParams(window.location.search);
+
+        let page = params.get('page');
+        let sub = params.get('sub');
+        let date = params.get('date');
+
+        // hash 路由覆盖：#/page/sub 或 #/page/sub?date=xxx
+        const hash = window.location.hash;
+        if (hash && hash.startsWith('#/')) {
+            const [path, hashQs] = hash.slice(2).split('?');
+            const parts = path.split('/').filter(Boolean);
+            if (parts.length >= 1 && validTabs.includes(parts[0])) {
+                page = parts[0];
+                if (parts.length >= 2 && VALID_SUB_TABS[page]?.includes(parts[1])) {
+                    sub = parts[1];
+                }
+            }
+            if (hashQs) {
+                const hp = new URLSearchParams(hashQs);
+                if (hp.get('date')) date = hp.get('date');
+            }
+        }
+
+        // 校验 page/sub 合法性
+        if (!validTabs.includes(page)) page = null;
+        if (sub && VALID_SUB_TABS[page] && !VALID_SUB_TABS[page].includes(sub)) sub = null;
+
+        return { page, sub, date };
     }
 
     /**
      * 初始化左侧菜单tab
-     * 优先级：URL参数page > localStorage记忆（无记录时默认market），并绑定菜单点击事件
-     * URL参数page用于统一外壳（dailystock）iframe 定位到指定tab
+     * 优先级：URL路由（hash > query） > localStorage记忆 > 默认market
+     * 初始化完成后地址栏hash同步为当前路由（URL始终可收藏），并监听：
+     * - 子tab/日期变化事件（模块dispatch）→ 同步hash
+     * - hashchange（手动改URL/前进后退）→ 按新路由切换
      */
     function initTabs() {
-        // 统一外壳通过URL参数page指定初始tab（market|fupan|watchlist|settings）
+        const route = parseRoute();
         const validTabs = ['market', 'fupan', 'watchlist', 'settings'];
-        const urlPage = new URLSearchParams(window.location.search).get('page');
+
         let saved = 'market';
-        if (urlPage && validTabs.includes(urlPage)) {
-            saved = urlPage;
+        if (route.page && validTabs.includes(route.page)) {
+            saved = route.page;
         } else {
             try {
                 saved = localStorage.getItem(ACTIVE_TAB_KEY) || 'market';
             } catch (e) { /* 忽略 */ }
             if (!validTabs.includes(saved)) saved = 'market';
         }
-        switchTab(saved);
+
+        // 统一入口：预置子tab/日期 → 切主tab → settings子tab直达
+        applyRoute({ page: saved, sub: route.sub, date: route.date });
+        // 初始同步hash（原地替换，不加历史记录）
+        syncRouteHash(false);
 
         // 菜单点击切换
         document.querySelectorAll('.menu-item').forEach(btn => {
@@ -470,11 +583,39 @@ const App = (function () {
                 switchTab(btn.dataset.tab);
             });
         });
+
+        // 子tab/日期变化 → 同步hash（模块通过CustomEvent解耦上报，仅当前激活tab的事件生效）
+        document.addEventListener('dailystock:subchange', (e) => {
+            const { page, sub, date } = e.detail || {};
+            if (!page || page !== routeState.page) return;
+            if (sub && VALID_SUB_TABS[page] && VALID_SUB_TABS[page].includes(sub)) {
+                routeState.sub = sub;
+                lastSubByPage[page] = sub;
+            }
+            if (page === 'fupan' && date !== undefined && date !== null) {
+                routeState.date = date;
+            }
+            syncRouteHash(false);
+        });
+
+        // hashchange：手动编辑URL或浏览器前进/后退时按新路由切换
+        window.addEventListener('hashchange', () => {
+            const r = parseRoute();
+            if (!r.page) return;
+            const subChanged = r.sub && r.sub !== routeState.sub;
+            const dateChanged = r.page === 'fupan' && r.date && r.date !== routeState.date;
+            if (r.page !== routeState.page) {
+                applyRoute(r);
+                syncRouteHash(false);
+            } else if (subChanged || dateChanged) {
+                applyRoute({ page: r.page, sub: subChanged ? r.sub : null, date: dateChanged ? r.date : null });
+            }
+        });
     }
 
     /**
      * 初始化设置页二级tab（监控参数/数据缓存/网络代理）
-     * 切换tab时同步高亮与面板显隐
+     * 切换tab时同步高亮与面板显隐，并上报子tab变化（main.js同步URL hash）
      */
     function initSettingsTabs() {
         document.querySelectorAll('[data-settings-tab]').forEach(btn => {
@@ -488,6 +629,10 @@ const App = (function () {
                 document.querySelectorAll('.settings-tab-panel').forEach(panel => {
                     panel.classList.toggle('active', panel.dataset.settingsPanel === tab);
                 });
+                // TODO12：上报子tab变化（URL hash同步 #/settings/{tab}）
+                document.dispatchEvent(new CustomEvent('dailystock:subchange', {
+                    detail: { page: 'settings', sub: tab }
+                }));
             });
         });
     }
@@ -504,12 +649,29 @@ const App = (function () {
             document.body.classList.add('embedded');
         }
 
-        // 接收统一外壳的导航消息：{type:'dailystock:navigate', page:'market'|'fupan'|'watchlist'|'settings'}
+        // 接收统一外壳的导航消息：
+        // {type:'dailystock:navigate', page, sub?}
+        //   page: market|fupan|watchlist|settings
+        //   sub:  可选二级子tab（fupan: market/sectors/zt/score; watchlist: risk/browse; settings: monitor/cache/proxy）
         window.addEventListener('message', (event) => {
             const data = event.data;
             if (data && data.type === 'dailystock:navigate' &&
                 ['market', 'fupan', 'watchlist', 'settings'].includes(data.page)) {
                 switchTab(data.page);
+                // runtime 子tab跳转：fupan/watchlist 在已激活后通过模块自身 API 切
+                if (data.sub) {
+                    // 先预置 localStorage，再触发模块的切换逻辑
+                    if (data.page === 'fupan' && typeof Fupan !== 'undefined' && Fupan.presetSub) {
+                        Fupan.presetSub(data.sub);
+                        // 直接让 Fupan 重激活（或等待下次 loadDate 时读子tab）
+                        if (typeof Fupan.switchSub === 'function') Fupan.switchSub(data.sub);
+                    } else if (data.page === 'watchlist' && typeof Watchlist !== 'undefined' && Watchlist.presetSub) {
+                        Watchlist.presetSub(data.sub);
+                    } else if (data.page === 'settings' && VALID_SUB_TABS.settings.includes(data.sub)) {
+                        const btn = document.querySelector(`[data-settings-tab="${data.sub}"]`);
+                        if (btn) btn.click();
+                    }
+                }
             }
         });
     }

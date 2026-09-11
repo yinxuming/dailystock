@@ -41,8 +41,18 @@ const Shell = (function () {
     const collapseBtn = document.getElementById('btnCollapse');
 
     /**
+     * 同步当前菜单到地址栏hash（TODO12：外壳每个菜单对应不同URL，可收藏直达）
+     * @param {string} menu 菜单标识
+     */
+    function syncMenuHash(menu) {
+        try {
+            history.replaceState(null, '', location.pathname + '#/' + menu);
+        } catch (e) { /* 忽略 */ }
+    }
+
+    /**
      * 初始化外壳
-     * 主流程：绑定菜单/收起事件 → 恢复菜单收起态 → 恢复菜单选中态（按需加载对应iframe）
+     * 主流程：绑定菜单/收起事件 → 恢复菜单收起态 → 恢复菜单选中态（URL hash优先，按需加载对应iframe）
      */
     function init() {
         // 菜单点击事件
@@ -65,9 +75,14 @@ const Shell = (function () {
             setCollapsed(true, false);
         }
 
-        // 恢复上次选中的菜单（按需加载对应iframe + 同步菜单高亮，两者必须一致）
-        const saved = localStorage.getItem(ACTIVE_MENU_KEY);
-        const target = saved && menuItemsOwn(saved) ? saved : 'sector';
+        // 恢复上次选中的菜单：URL hash（#/fupan 可收藏直达）> localStorage记忆 > 默认板块资金
+        let target = localStorage.getItem(ACTIVE_MENU_KEY);
+        const hash = location.hash;
+        if (hash && hash.startsWith('#/')) {
+            const m = hash.slice(2).split(/[/?]/)[0];
+            if (menuItemsOwn(m)) target = m;
+        }
+        if (!target || !menuItemsOwn(target)) target = 'sector';
         if (target === activeMenu) {
             // 默认菜单与恢复值相同：直接加载（switchMenu对相同菜单短路）
             const btn = document.querySelector(`.shell-menu-item[data-menu="${target}"]`);
@@ -75,6 +90,7 @@ const Shell = (function () {
         } else {
             switchMenu(target);
         }
+        syncMenuHash(target);
     }
 
     /**
@@ -120,7 +136,7 @@ const Shell = (function () {
     /**
      * 切换菜单
      * 主流程：
-     * 1. 更新菜单高亮与持久化
+     * 1. 更新菜单高亮与持久化 + URL hash同步（可收藏）
      * 2. sector → 显示sector iframe（懒加载，切换无重载）
      * 3. stock页面 → 显示stock iframe；iframe就绪且当前已在stock应用时 postMessage 内部切tab（无刷新），
      *    否则设置src跳转到目标页面
@@ -131,11 +147,12 @@ const Shell = (function () {
         const btn = document.querySelector(`.shell-menu-item[data-menu="${menu}"]`);
         if (!btn) return;
 
-        // 更新高亮与持久化
+        // 更新高亮与持久化 + TODO12：URL hash同步
         menuItems.forEach(b => b.classList.toggle('active', b === btn));
         const prevMenu = activeMenu;
         activeMenu = menu;
         localStorage.setItem(ACTIVE_MENU_KEY, menu);
+        syncMenuHash(menu);
 
         if (menu === 'sector') {
             showFrame('sector', btn.dataset.src);
