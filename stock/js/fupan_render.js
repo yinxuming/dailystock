@@ -999,12 +999,12 @@ const FupanRenderer = (function () {
         if (cat !== '__all__') rows = rows.filter(s => stockSector(s) === cat);
         rows = sortPoolRows(rows, pool);
         const catLabel = cat === '__all__' ? '全部' : cat;
-        // 批量工具栏（TODO15.3：勾选行后批量加自选，支持分组选择/新建/拼音检索）
+        // 批量工具栏（TODO15.3 + TODO18.1：选中有数据才显示批量加自选/取消选择按钮）
         const batchBar = `
             <div class="fp-pool-batch">
                 <span class="fp-pool-batch-count">已选 <b data-fp-sel-count>0</b> / ${rows.length} 只</span>
-                <button class="btn btn-primary btn-sm" data-fp-batch-add title="勾选股票批量加入自选（可选分组/新建分组）">批量加自选</button>
-                <button class="btn btn-secondary btn-sm" data-fp-batch-clear>取消选择</button>
+                <button class="btn btn-primary btn-sm" data-fp-batch-add style="display:none" title="勾选股票批量加入自选（可选分组/新建分组）">批量加自选</button>
+                <button class="btn btn-secondary btn-sm" data-fp-batch-clear style="display:none">取消选择</button>
             </div>`;
         const table = pool === 'zt' ? ztPoolTable(rows) : (pool === 'dt' ? dtPoolTable(rows) : zbPoolTable(rows));
         listEl.innerHTML = `<h4 class="fp-chart-title">${esc(poolNames[pool])}：${esc(catLabel)}（${rows.length}只）</h4>${batchBar}${table}`;
@@ -1042,16 +1042,21 @@ const FupanRenderer = (function () {
     function bindPoolBatch(listEl) {
         const countEl = listEl.querySelector('[data-fp-sel-count]');
         const checkAll = listEl.querySelector('[data-fp-check-all]');
+        const addBtn = listEl.querySelector('[data-fp-batch-add]');
+        const clearBtn = listEl.querySelector('[data-fp-batch-clear]');
         if (!countEl || !checkAll) return;
 
         /**
-         * 刷新已选计数与全选框状态
+         * 刷新已选计数、全选框状态及批量按钮显隐（TODO18.1：选中数>0才显示按钮）
          */
         const refresh = () => {
             const checks = Array.from(listEl.querySelectorAll('.fp-pool-check'));
             const checked = checks.filter(c => c.checked);
             countEl.textContent = checked.length;
             checkAll.checked = checks.length > 0 && checked.length === checks.length;
+            const has = checked.length > 0;
+            if (addBtn) addBtn.style.display = has ? '' : 'none';
+            if (clearBtn) clearBtn.style.display = has ? '' : 'none';
         };
 
         // 全选框点击不触发表头排序（makeSortable监听th click）
@@ -1067,7 +1072,6 @@ const FupanRenderer = (function () {
         });
 
         // 批量加自选：收集勾选行 → 分组选择弹窗（支持新建分组/拼音首字母检索）
-        const addBtn = listEl.querySelector('[data-fp-batch-add]');
         if (addBtn) addBtn.addEventListener('click', () => {
             const stocks = Array.from(listEl.querySelectorAll('.fp-pool-check:checked')).map(c => ({
                 code: c.dataset.code,
@@ -1075,7 +1079,11 @@ const FupanRenderer = (function () {
                 market: marketOfCode(c.dataset.code)
             }));
             if (!stocks.length) return;
-            if (typeof WlGroup === 'undefined') { alert('分组模块未加载，无法批量加自选'); return; }
+            if (typeof WlGroup === 'undefined' || !WlGroup.openAddToGroupModal) {
+                if (typeof WlGroup !== 'undefined' && WlGroup.showToast) WlGroup.showToast('分组模块未加载，无法批量加自选', 'error');
+                else alert('分组模块未加载，无法批量加自选');
+                return;
+            }
             WlGroup.openAddToGroupModal(stocks, {
                 title: '批量加自选',
                 onDone: () => {
@@ -1087,7 +1095,6 @@ const FupanRenderer = (function () {
         });
 
         // 取消选择
-        const clearBtn = listEl.querySelector('[data-fp-batch-clear]');
         if (clearBtn) clearBtn.addEventListener('click', () => {
             listEl.querySelectorAll('.fp-pool-check').forEach(c => { c.checked = false; });
             refresh();

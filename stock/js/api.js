@@ -237,8 +237,8 @@ const StockAPI = (function () {
     // ===== 识别结果缓存 =====
 
     /**
-     * 获取缓存的识别结果
-     * @returns {Array|null} 缓存的分析结果，过期或不存在返回null
+     * 获取缓存的识别结果（TODO20：返回带元数据的对象，供调用方判断是否需重拉K线）
+     * @returns {{data:Array, meta:{klineLatestDate:string, tradeDayOffset:number, capturedAfterClose:boolean}}|null}
      */
     function getResultCache() {
         try {
@@ -262,21 +262,29 @@ const StockAPI = (function () {
                 return null;
             }
 
-            return cache.data;
+            return {
+                data: cache.data,
+                meta: cache.meta || {}
+            };
         } catch (e) {
             return null;
         }
     }
 
     /**
-     * 写入识别结果缓存
+     * 写入识别结果缓存（TODO20：附带K线最新日/交易日偏移/是否收盘后获取等元数据）
      * @param {Array} results - 分析结果数组
+     * @param {Object} [meta] 可选元数据
+     * @param {string} [meta.klineLatestDate] K线最新交易日（YYYY-MM-DD）
+     * @param {number} [meta.tradeDayOffset] 目标日与最新日的交易日偏移
+     * @param {boolean} [meta.capturedAfterClose] 是否15:00收盘后获取的K线
      */
-    function setResultCache(results) {
+    function setResultCache(results, meta) {
         try {
             const cache = {
                 data: results,
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                meta: meta || {}
             };
             localStorage.setItem(RESULT_CACHE_KEY, JSON.stringify(cache));
         } catch (e) {

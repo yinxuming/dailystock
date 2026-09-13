@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -7,7 +7,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>股票严重异动监控系统</title>
-    <link rel="stylesheet" href="css/style.css?v=11">
+    <link rel="stylesheet" href="css/style.css?v=12">
 </head>
 <body>
     <div class="app-layout">
@@ -27,11 +27,11 @@
             <!-- ===== 菜单1：市场行情 ===== -->
             <section id="page-market" class="page active">
                 <header class="page-header">
-                    <h2 class="page-title">市场行情</h2>
-                    <!-- 市场行情二级tab（TODO16.3：市场异动=全量按风险降序 / 关注异动=自定义监控个股） -->
+                    <h2 class="page-title">异动监控</h2>
+                    <!-- 异动监控二级tab（TODO19.2：关注异动放最前） -->
                     <div class="sub-tabs">
-                        <button class="sub-tab active" data-mkt-sub="all" title="全市场异动分析，按风险由高到低">市场异动</button>
-                        <button class="sub-tab" data-mkt-sub="focus" title="自选监控个股异动（搜索添加）">关注异动</button>
+                        <button class="sub-tab active" data-mkt-sub="focus" title="自选监控个股异动（搜索添加）">关注异动</button>
+                        <button class="sub-tab" data-mkt-sub="all" title="全市场异动分析，按风险由高到低">市场异动</button>
                     </div>
                     <div class="header-actions">
                         <span id="dataDate" class="data-date"></span>
@@ -300,18 +300,18 @@
         <span>数据来源：东方财富 / 腾讯 | 异动规则：10天100% / 30天200%（严重异常波动，适用全A股）</span>
     </footer>
 
-    <script src="js/api.js?v=22"></script>
+    <script src="js/api.js?v=23"></script>
     <script src="js/calculator.js?v=20"></script>
     <script src="js/stock_search.js?v=1"></script>
     <script src="js/tradingCalendar.js?v=11"></script>
     <script src="js/renderer.js?v=20"></script>
-    <script src="js/wl_group.js?v=1"></script>
+    <script src="js/wl_group.js?v=3"></script>
     <script src="js/watchlist.js?v=5"></script>
     <script src="js/fupan_data.js?v=1"></script>
     <script src="js/fupan_scoring.js?v=2"></script>
     <script src="js/fupan_charts.js?v=3"></script>
-    <script src="js/fupan_render.js?v=5"></script>
+    <script src="js/fupan_render.js?v=7"></script>
     <script src="js/fupan.js?v=4"></script>
-    <script src="js/main.js?v=23"></script>
+    <script src="js/main.js?v=24"></script>
 </body>
 </html>

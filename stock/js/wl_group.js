@@ -454,7 +454,7 @@ const WlGroup = (function () {
                 const g = getGroups().find(x => x.id === gid);
                 const name = prompt('重命名分组', g ? g.name : '');
                 if (name !== null && name.trim()) {
-                    if (!renameGroup(gid, name.trim())) alert('重命名失败：名称为空或已存在');
+                    if (!renameGroup(gid, name.trim())) showToast('重命名失败：名称为空或已存在', 'error');
                     renderRows();
                 }
             } else if (act === 'del') {
@@ -469,10 +469,11 @@ const WlGroup = (function () {
         // 新建分组
         modal.panel.querySelector('.wl-mg-new-btn').addEventListener('click', () => {
             const name = input.value.trim();
-            if (!name) { alert('请输入分组名称'); return; }
-            if (!addGroup(name)) { alert('新建失败：名称为空或已存在'); return; }
+            if (!name) { showToast('请输入分组名称', 'error'); return; }
+            if (!addGroup(name)) { showToast('新建失败：名称为空或已存在', 'error'); return; }
             input.value = '';
             renderRows();
+            showToast(`已新建分组「${name}」`, 'success');
         });
         input.addEventListener('keydown', e => {
             if (e.key === 'Enter') modal.panel.querySelector('.wl-mg-new-btn').click();
@@ -571,15 +572,16 @@ const WlGroup = (function () {
         const newInput = modal.panel.querySelector('.wl-ag-new-input');
         const doCreate = () => {
             const name = newInput.value.trim();
-            if (!name) { alert('请输入新分组名称'); return; }
+            if (!name) { showToast('请输入新分组名称', 'error'); return; }
             const g = addGroup(name);
-            if (!g) { alert('新建失败：分组名称已存在'); return; }
+            if (!g) { showToast('新建失败：分组名称已存在', 'error'); return; }
             selectedGid = g.id;
             newInput.value = '';
             input.value = g.name;
             dropdown.style.display = 'none';
             renderSelected();
             refreshGroupBar();
+            showToast(`已新建并选中分组「${name}」`, 'success');
         };
         modal.panel.querySelector('.wl-ag-new-btn').addEventListener('click', doCreate);
         newInput.addEventListener('keydown', e => {
@@ -604,18 +606,19 @@ const WlGroup = (function () {
                     existed++;
                 }
             });
+            // 关闭弹窗 → 刷新UI → Toast 非阻塞提示（TODO18.3：替代原弹窗内回显）
+            modal.close();
+            refreshGroupBar();
+            notifyChange();
+            if (typeof opts.onDone === 'function') opts.onDone();
             const groupName = selectedGid ? `「${getGroupName(selectedGid)}」` : '自选列表';
-            let msg = `已添加${added}只到${groupName}`;
-            if (existed > 0) msg += `，${existed}只已在自选中${(selectedGid || opts.setGroupMode) ? '（已同步分组）' : '，跳过'}`;
-            // 结果回显在"已选分组"区域，700ms后关闭弹窗并刷新（防重复点击：先禁用按钮）
-            okBtn.disabled = true;
-            selectedEl.innerHTML = `<b>${esc(msg)}</b>`;
-            setTimeout(() => {
-                modal.close();
-                refreshGroupBar();
-                notifyChange();
-                if (typeof opts.onDone === 'function') opts.onDone();
-            }, 700);
+            if (added > 0 || (existed > 0 && (selectedGid || opts.setGroupMode))) {
+                let msg = `已添加${added}只到${groupName}`;
+                if (existed > 0) msg += `，${existed}只已在自选中${(selectedGid || opts.setGroupMode) ? '（已同步分组）' : '，跳过'}`;
+                showToast(msg, 'success');
+            } else if (existed > 0) {
+                showToast(`${existed}只已在自选中，跳过`, 'info');
+            }
         });
 
         modal.panel.querySelector('.wl-ag-cancel').addEventListener('click', modal.close);
@@ -635,6 +638,36 @@ const WlGroup = (function () {
         return String(s === null || s === undefined ? '' : s)
             .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    // ============================================================
+    // Toast 轻量提示（TODO18.3：非阻塞自动消失，替代 alert）
+    // ============================================================
+
+    /**
+     * 显示一个轻量 Toast 提示（自动消失，堆叠显示，非阻塞）
+     * @param {string} msg 提示文字
+     * @param {'success'|'error'|'info'} [type='info'] 类型
+     * @param {number} [duration=2200] 持续毫秒
+     */
+    function showToast(msg, type = 'info', duration = 2200) {
+        if (!msg) return;
+        // 容器
+        let wrap = document.querySelector('.wl-toast-wrap');
+        if (!wrap) {
+            wrap = document.createElement('div');
+            wrap.className = 'wl-toast-wrap';
+            document.body.appendChild(wrap);
+        }
+        const toast = document.createElement('div');
+        toast.className = 'wl-toast wl-toast-' + type;
+        toast.textContent = msg;
+        wrap.appendChild(toast);
+        requestAnimationFrame(() => toast.classList.add('wl-toast-show'));
+        setTimeout(() => {
+            toast.classList.remove('wl-toast-show');
+            toast.addEventListener('transitionend', () => toast.remove(), { once: true });
+        }, duration);
     }
 
     // ============================================================
@@ -675,6 +708,7 @@ const WlGroup = (function () {
         refreshGroupBar,
         openManageModal,
         openAddToGroupModal,
+        showToast,
         // 拼音匹配（纯函数，供Node测试）
         pinyinFirstLetters,
         matchPinyin

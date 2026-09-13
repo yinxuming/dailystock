@@ -43,7 +43,7 @@ const App = (function () {
     let isLoading = false;
     let pendingRerun = false; // 运行中收到自定义监控增删请求时，本轮结束后补跑一次
     let selectedDate = null; // 用户选择的日期（YYYY-MM-DD），null=自动
-    let marketSub = 'all';   // 市场行情页当前二级tab（all/focus，TODO16.3）
+    let marketSub = 'focus'; // 异动监控页当前二级tab（focus=关注异动放最前 / all=市场异动，TODO19.2）
     let lastResults = [];    // 最近一次全量分析结果（含isCustom标记，双视图过滤渲染用）
     let lastTargetDate = null; // 最近一次渲染目标交易日（二级tab切换重渲染用）
 
@@ -269,15 +269,28 @@ const App = (function () {
                 StockAPI.clearAllCache();
             }
 
-            // 第0步：检查识别结果缓存
+            // 第0步：检查识别结果缓存（TODO20：带K线日期/收盘后/offset三重判定）
             if (!forceRefresh) {
-                const cachedResults = StockAPI.getResultCache();
-                if (cachedResults && cachedResults.length > 0) {
-                    console.log('使用缓存结果，共' + cachedResults.length + '只');
-                    lastResults = cachedResults;
-                    renderActiveMarketView(targetDate);
-                    updateDataInfo(cachedResults, targetDate);
-                    return;
+                const cacheWrap = StockAPI.getResultCache();
+                if (cacheWrap && cacheWrap.data && cacheWrap.data.length > 0) {
+                    const meta = cacheWrap.meta || {};
+                    // 缓存时效三条件：
+                    // 1) K线最新日与目标交易日的 offset 一致（否则切了日期仍返回旧数据）
+                    // 2) K线最新日 == latestTradeDate（否则缓存是更早拉的）
+                    // 3) 已收盘后获取 or latestTradeDate < today（历史交易日无盘中问题）
+                    const klineDateOk = meta.klineLatestDate === latestTradeDate;
+                    const offsetOk = meta.tradeDayOffset === tradeDayOffset;
+                    const afterClose = meta.capturedAfterClose || latestTradeDate !== TradingCalendar.formatDate(new Date());
+                    if (klineDateOk && offsetOk && afterClose) {
+                        console.log('使用缓存结果，共' + cacheWrap.data.length + '只（meta=' + JSON.stringify(meta) + '）');
+                        lastResults = cacheWrap.data;
+                        renderActiveMarketView(targetDate);
+                        updateDataInfo(cacheWrap.data, targetDate);
+                        return;
+                    } else {
+                        console.log('缓存条件不全，重新拉取（klineDateOk=' + klineDateOk + ', offsetOk=' + offsetOk + ', afterClose=' + afterClose + ', meta=' + JSON.stringify(meta) + '）');
+                        StockAPI.clearResultCache();
+                    }
                 }
             }
 
@@ -339,9 +352,15 @@ const App = (function () {
             const customCodeSet = new Set(customs.map(s => s.code));
             results.forEach(r => { if (customCodeSet.has(r.code)) r.isCustom = true; });
 
-            // 第4步：缓存识别结果（全量含自定义标记）
+            // 第4步：缓存识别结果（TODO20：附带K线日期/offset/收盘后判定，保证切日期/盘前盘中不命中旧缓存）
             if (results.length > 0) {
-                StockAPI.setResultCache(results);
+                const klineDate = results[0].date || latestTradeDate;
+                const capturedAfterClose = TradingCalendar.isMarketClosed();
+                StockAPI.setResultCache(results, {
+                    klineLatestDate: klineDate,
+                    tradeDayOffset: tradeDayOffset,
+                    capturedAfterClose: capturedAfterClose
+                });
             }
             lastResults = results;
 
@@ -418,7 +437,7 @@ const App = (function () {
     }
 
     /**
-     * 切换市场行情页二级tab（TODO16.3）
+     * 切换异动监控页二级tab（TODO19.2：关注异动放最前 + 切市场异动时缓存时效弹窗确认）
      * 主流程：更新按钮态+持久化 → 基于已有结果重渲染视图 → 上报子tab变化（URL hash同步）
      * @param {string} sub - all=市场异动 / focus=关注异动
      * @param {boolean} [notify=true] 是否上报subchange（初始化恢复时不触发）
@@ -432,6 +451,25 @@ const App = (function () {
         document.querySelectorAll('[data-mkt-sub]').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.mktSub === sub);
         });
+
+        // TODO19.2：切到"市场异动"tab时，如果缓存已过时且在盘中，弹窗确认是否刷新
+        if (sub === 'all' && lastResults.length && !TradingCalendar.isMarketClosed()) {
+            const cacheWrap = StockAPI.getResultCache();
+            if (cacheWrap) {
+                const meta = cacheWrap.meta || {};
+                const latestTradeDate = TradingCalendar.getLatestTradeDate();
+                const todayStr = TradingCalendar.formatDate(new Date());
+                // 缓存是盘中拉的 + K线不是收盘定型 → 提示刷新
+                if (!meta.capturedAfterClose && meta.klineLatestDate !== latestTradeDate) {
+                    const ok = window.confirm('当前数据为盘中更新（未收盘定型），是否刷新获取最新K线？');
+                    if (ok) {
+                        run(true);
+                        return;
+                    }
+                }
+            }
+        }
+
         renderActiveMarketView();
         if (notify) {
             document.dispatchEvent(new CustomEvent('dailystock:subchange', {
