@@ -2,14 +2,18 @@
  * 自选股模块
  *
  * 功能：
- * 1. 自选股CRUD：localStorage持久化（代码/名称/市场/备注/添加时间）
+ * 1. 自选股CRUD：localStorage持久化（代码/名称/市场/备注/分组/添加时间）
  * 2. CSV导入：兼容GBK/UTF-8编码，代码格式兼容 SZ000017 / 000017 / 000017.SZ
  * 3. CSV导出：UTF-8带BOM（Excel兼容），列：名称,代码,备注
  * 4. 搜索添加：共用组件StockSearch（suggest接口实时搜索名称/拼音/代码，全量列表降级，见stock_search.js）
- * 5. 二级菜单：异动风险视图（默认）/ 普通浏览视图，切换状态记忆
- *    - 异动风险视图：复用UnusualCalculator计算100/200异动触发值（与市场行情页同算法）
- *    - 普通浏览视图：行情快照+阶段涨幅+涨停信息（详见renderBrowseTable），27列全部支持点击表头排序
- * 6. 移除自选股时联动清理该股票K线缓存（StockAPI.removeKlineCache）
+ * 5. 分组管理（TODO16.2）：分组体系由WlGroup模块实现（全部/未分组/各分组切换/管理/排序，
+ *    加自选分组弹窗支持拼音首字母检索），本模块提供股票维度的分组读写（addStock/setStockGroup）
+ *    并按激活分组过滤浏览视图；分组列点击可修改单股分组
+ * 6. 异动查询列（TODO16.1）：浏览视图操作列"异动"按钮，点击跳转市场行情页-关注异动tab
+ *    （个股异动空间：自动加入关注监控并计算展示100/200异动）
+ * 7. 普通浏览视图（唯一视图，TODO16.1异动风险tab已移除）：
+ *    行情快照+阶段涨幅+涨停信息（详见renderBrowseTable），28列全部支持点击表头排序
+ * 8. 移除自选股时联动清理该股票K线缓存（StockAPI.removeKlineCache）
  *
  * 数据来源：
  * - 实时行情：东方财富ulist.np批量接口（StockAPI.getQuoteBatch）
@@ -21,22 +25,19 @@ const Watchlist = (function () {
 
     // ===== 常量配置 =====
     const STORAGE_KEY = 'unusual_watchlist';   // 自选股持久化key
-    const SUBTAB_KEY = 'unusual_wl_subtab';    // 二级菜单记忆key
-    const FORWARD_DAYS = 4;                    // 异动风险视图提前天数（T+0~T+3，与市场行情页一致）
     const BROWSE_KLINE_LIMIT = 260;            // 浏览视图K线数量（覆盖今年来涨幅计算）
 
     // ===== 运行状态 =====
-    let wlRenderer = null;          // 异动风险视图渲染器实例（Renderer工厂创建）
-    let currentSubTab = 'risk';     // 当前二级菜单：risk|browse
-    let isRiskLoading = false;      // 异动风险视图加载中标记
-    let isBrowseLoading = false;    // 浏览视图加载中标记
-    let browseRows = [];            // 浏览视图当前行数据（表头排序基于此数据重渲染）
-    const viewLoaded = { risk: false, browse: false }; // 各视图是否已加载过（懒加载标记）
+    let isBrowseLoading = false;      // 浏览视图加载中标记
+    let browseLoaded = false;         // 浏览视图是否已加载过（懒加载标记，切tab首次进入才拉数据）
+    let browseRows = [];              // 浏览视图当前行数据（表头排序基于此数据重渲染）
+    let browseAllRows = [];           // 浏览视图全量行数据（分组过滤前的数据源，切分组不重新拉取）
 
     // 浏览视图可排序字段 → 行数据取值器（与index.html表头data-sort属性一一对应）
     const BROWSE_SORT_FIELDS = {
         code: r => r.code,
         name: r => r.name,
+        group: r => r.groupName || '',
         floatMV: r => r.floatMV,
         totalMV: r => r.totalMV,
         changePercent: r => r.changePercent,
@@ -108,9 +109,10 @@ const Watchlist = (function () {
      * @param {string} code - 股票代码（6位数字）
      * @param {string} name - 股票名称
      * @param {number} market - 市场编号（0=深/北，1=沪）
+     * @param {string} [groupId] - 分组id（TODO16.2，空=未分组）
      * @returns {boolean} 是否添加成功（已存在返回false）
      */
-    function addStock(code, name, market) {
+    function addStock(code, name, market, groupId) {
         if (isInList(code)) return false;
         const list = getList();
         list.push({
@@ -118,10 +120,25 @@ const Watchlist = (function () {
             market: market,
             name: name,
             note: '',
+            groupId: groupId || '',
             addedAt: Date.now()
         });
         saveList(list);
         return true;
+    }
+
+    /**
+     * 设置自选股所属分组（TODO16.2，分组列点击/加自选弹窗对已存在股票同步分组）
+     * @param {string} code - 股票代码
+     * @param {string} groupId - 分组id（空=移至未分组）
+     */
+    function setStockGroup(code, groupId) {
+        const list = getList();
+        const stock = list.find(s => s.code === code);
+        if (stock && stock.groupId !== groupId) {
+            stock.groupId = groupId || '';
+            saveList(list);
+        }
     }
 
     /**
@@ -406,159 +423,49 @@ const Watchlist = (function () {
     }
 
     // ============================================================
-    // 二级菜单切换
+    // 视图刷新（TODO16.1：异动风险子tab已移除，仅浏览视图；TODO16.2：按激活分组过滤）
     // ============================================================
-
-    /**
-     * 仅应用二级菜单UI状态（不触发数据加载，初始化时用）
-     * @param {string} sub - risk|browse
-     */
-    function applySubTabState(sub) {
-        currentSubTab = sub;
-        localStorage.setItem(SUBTAB_KEY, sub);
-        document.querySelectorAll('.sub-tab').forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.sub === sub);
-        });
-        document.getElementById('wlRiskView').style.display = sub === 'risk' ? 'block' : 'none';
-        document.getElementById('wlBrowseView').style.display = sub === 'browse' ? 'block' : 'none';
-    }
-
-    /**
-     * 切换二级菜单（异动风险/普通浏览）
-     * 主流程：更新UI状态 → 视图未加载过或强制刷新时加载数据（懒加载）→ 上报URL同步
-     * @param {string} sub - risk|browse
-     * @param {boolean} forceRefresh - 是否强制刷新
-     */
-    function switchSubTab(sub, forceRefresh = false) {
-        applySubTabState(sub);
-        // 懒加载：视图未加载过 或 强制刷新 时才拉取数据
-        if (forceRefresh || !viewLoaded[sub]) {
-            refreshCurrentView(forceRefresh);
-        }
-        // TODO12：上报子tab变化（main.js同步URL hash #/watchlist/{sub}）
-        document.dispatchEvent(new CustomEvent('dailystock:subchange', {
-            detail: { page: 'watchlist', sub }
-        }));
-    }
 
     /**
      * 自选tab被激活时回调（main.js切tab时调用）
-     * 首次进入自选页时加载当前二级视图数据（懒加载入口）
+     * 首次进入自选页时加载浏览视图数据（懒加载入口）
      */
     function onTabActivated() {
-        if (!viewLoaded[currentSubTab]) {
-            refreshCurrentView(false);
+        if (!browseLoaded) {
+            browseLoaded = true;
+            refreshBrowse(false);
         }
     }
 
     /**
-     * 刷新当前二级视图
-     * @param {boolean} forceRefresh - 是否强制刷新（清K线缓存）
+     * 按当前激活分组过滤行数据（TODO16.2，分组栏切换时调用）
+     * @param {Array} rows 浏览视图全量行数据
+     * @returns {Array} 过滤后的行数据
      */
-    function refreshCurrentView(forceRefresh) {
-        if (currentSubTab === 'risk') {
-            viewLoaded.risk = true;
-            refreshRisk(forceRefresh);
-        } else {
-            viewLoaded.browse = true;
-            refreshBrowse(forceRefresh);
-        }
+    function filterRows(rows) {
+        if (typeof WlGroup === 'undefined') return rows;
+        return WlGroup.filterByActive(rows);
     }
 
     /**
-     * 初始化二级菜单点击事件
-     */
-    function initSubTabs() {
-        document.querySelectorAll('.sub-tab').forEach(btn => {
-            btn.addEventListener('click', () => {
-                if (btn.dataset.sub !== currentSubTab) {
-                    switchSubTab(btn.dataset.sub);
-                }
-            });
-        });
-    }
-
-    // ============================================================
-    // 异动风险视图（复用市场行情页异动计算管线）
-    // ============================================================
-
-    /**
-     * 刷新异动风险视图
-     * 主流程：交易日定位 → 批量K线(40) → 基准指数 → 异动计算 → 渲染
+     * 刷新当前视图（唯一浏览视图；供导入CSV/移除/刷新/重试按钮统一调用）
      * @param {boolean} forceRefresh - 强制刷新时清K线缓存
      */
-    async function refreshRisk(forceRefresh = false) {
-        const list = getList();
+    function refreshCurrentView(forceRefresh) {
+        refreshBrowse(forceRefresh);
+    }
 
-        // 空列表直接显示空状态
-        if (list.length === 0) {
-            wlRenderer.renderEmpty('自选列表为空，请通过搜索或导入CSV添加股票');
-            document.getElementById('wlCount100').textContent = '0';
-            document.getElementById('wlCount200').textContent = '0';
-            document.getElementById('wlCountTotal').textContent = '0';
-            return;
-        }
-
-        if (isRiskLoading) return;
-        isRiskLoading = true;
-
-        try {
-            // 强制刷新时仅清K线缓存（不影响市场行情页结果缓存）
-            if (forceRefresh) {
-                StockAPI.clearKlineCache();
-            }
-
-            // 交易日定位（与市场行情页run()逻辑一致）
-            await TradingCalendar.ensureHolidaysLoaded();
-            const targetDate = TradingCalendar.getTargetTradeDate();
-            const latestTradeDate = TradingCalendar.getLatestTradeDate();
-            const tradeDayOffset = TradingCalendar.getTradeDayOffset(latestTradeDate, targetDate);
-
-            // 构造候选结构（与getCandidateStocks返回结构对齐）
-            const stocks = list.map(s => ({
-                code: s.code,
-                name: s.name,
-                market: s.market,
-                secid: s.market + '.' + s.code,
-                price: 0,
-                changePercent: 0,
-                gain5d: 0,
-                source: '自选'
-            }));
-
-            // 批量获取K线
-            wlRenderer.showLoading('正在获取自选股K线数据... (0/' + stocks.length + ')');
-            const klineMap = await StockAPI.batchGetKline(
-                stocks.map(s => s.secid),
-                2,
-                (completed, total) => wlRenderer.updateProgress(completed, total)
-            );
-
-            // 获取基准指数并计算异动
-            wlRenderer.showLoading('正在计算异动分析...');
-            const indexKlineMap = await StockAPI.getBenchmarkIndices(stocks, 40);
-            const results = UnusualCalculator.analyzeStocks(
-                stocks,
-                klineMap,
-                indexKlineMap,
-                FORWARD_DAYS,
-                true,           // 仅显示有异动风险的
-                tradeDayOffset
-            );
-
-            // 渲染（统计中自选数量显示总数而非风险数）
-            if (results.length === 0) {
-                wlRenderer.renderEmpty('当前自选股无100/200异动风险');
-            } else {
-                wlRenderer.renderTable(results, FORWARD_DAYS, targetDate);
-            }
-            document.getElementById('wlCountTotal').textContent = list.length;
-
-        } catch (error) {
-            console.error('自选异动计算失败:', error);
-            wlRenderer.showError('自选数据加载失败: ' + error.message);
-        } finally {
-            isRiskLoading = false;
+    /**
+     * 分组/激活分组变化回调（WlGroup注入）
+     * 主流程：更新分组栏数量 → 按激活分组过滤重新渲染浏览视图（不重新拉取行情）
+     */
+    function onGroupChanged() {
+        // 分组栏由WlGroup.refreshGroupBar自行刷新；此处仅按过滤重渲染已有数据
+        if (browseAllRows.length) {
+            renderBrowseTable(filterRows(browseAllRows));
+        } else {
+            // 首次尚未加载（如分组栏初始化触发）：空列表直接渲染空态
+            renderBrowseEmpty('自选列表为空，请通过搜索或导入CSV添加股票');
         }
     }
 
@@ -616,9 +523,11 @@ const Watchlist = (function () {
                 StockAPI.getTHSZTReason(latestDate).catch(e => new Map())
             ]);
 
-            // 4. 逐股组装行数据并渲染
+            // 4. 逐股组装行数据并渲染（TODO16.2：记录全量行数据，按激活分组过滤后渲染；同步分组栏角标）
             const rows = list.map(s => buildBrowseRow(s, quoteMap.get(s.code), klineMap.get(s.market + '.' + s.code), ztPool, thsReason));
-            renderBrowseTable(rows);
+            browseAllRows = rows;
+            if (typeof WlGroup !== 'undefined') WlGroup.refreshGroupBar();
+            renderBrowseTable(filterRows(rows));
 
         } catch (error) {
             console.error('自选浏览数据加载失败:', error);
@@ -647,8 +556,12 @@ const Watchlist = (function () {
 
         return {
             code: stock.code,
+            market: stock.market,                        // 市场编号（TODO16.1查询异动跳转用）
             name: (quote && quote.name) || stock.name,
             note: stock.note || '',
+            groupId: stock.groupId || '',                // 分组id（TODO16.2）
+            groupName: (typeof WlGroup !== 'undefined' && stock.groupId)
+                ? WlGroup.getGroupName(stock.groupId) : '',  // 分组名（分组列显示/排序用）
             // 行情快照
             floatMV: quote ? quote.floatMV : null,      // 流通市值(元)
             totalMV: quote ? quote.totalMV : null,      // 总市值(元)
@@ -821,7 +734,7 @@ const Watchlist = (function () {
         tbody.innerHTML = '';
         const tr = document.createElement('tr');
         const td = document.createElement('td');
-        td.colSpan = 27; // 27列
+        td.colSpan = 28; // 28列（TODO16.2新增分组列）
         td.style.textAlign = 'center';
         td.style.padding = '40px';
         td.style.color = '#64748b';
@@ -875,6 +788,25 @@ const Watchlist = (function () {
             // 名称
             addTd(row.name, 'bt-sticky-name');
 
+            // 分组（TODO16.2：显示分组名，点击弹出分组选择修改单股分组）
+            const tdGroup = document.createElement('td');
+            tdGroup.className = 'bt-group';
+            tdGroup.textContent = row.groupName || '--';
+            tdGroup.title = '点击修改分组';
+            tdGroup.addEventListener('click', () => {
+                if (typeof WlGroup !== 'undefined' && WlGroup.openAddToGroupModal) {
+                    WlGroup.openAddToGroupModal(
+                        [{ code: row.code, name: row.name, market: row.market, groupId: row.groupId }],
+                        {
+                            title: '设置分组',
+                            setGroupMode: true, // 已存在股票选"不分组"时移出分组
+                            onDone: () => refreshCurrentView(false) // 分组变更后重拉列表（行数据groupName更新）
+                        }
+                    );
+                }
+            });
+            tr.appendChild(tdGroup);
+
             // 市值
             addTd(formatAmount(row.floatMV));
             addTd(formatAmount(row.totalMV));
@@ -927,9 +859,19 @@ const Watchlist = (function () {
             });
             tr.appendChild(tdNote);
 
-            // 操作：移除
+            // 操作：查询异动（TODO16.1）+ 移除
             const tdOp = document.createElement('td');
             tdOp.className = 'bt-op';
+            const btnUnusual = document.createElement('button');
+            btnUnusual.className = 'btn btn-accent btn-sm';
+            btnUnusual.textContent = '异动';
+            btnUnusual.title = '查询该股异动空间（跳转市场行情页-关注异动）';
+            btnUnusual.addEventListener('click', () => {
+                if (typeof App !== 'undefined' && App.showStockUnusual) {
+                    App.showStockUnusual(row.code, row.name, row.market);
+                }
+            });
+            tdOp.appendChild(btnUnusual);
             const btnRemove = document.createElement('button');
             btnRemove.className = 'btn btn-secondary btn-sm';
             btnRemove.textContent = '移除';
@@ -1033,73 +975,33 @@ const Watchlist = (function () {
         // 搜索
         initSearch();
 
-        // 二级菜单
-        initSubTabs();
-
-        // 浏览视图表头排序（27列）
+        // 浏览视图表头排序（28列）
         initBrowseTableSort();
     }
 
     /**
-     * 处理自选移除（供异动风险视图操作列回调）
-     * @param {string} code - 股票代码
-     */
-    function handleRemove(code) {
-        const list = getList();
-        const stock = list.find(s => s.code === code);
-        const name = stock ? stock.name : code;
-        if (confirm('确定从自选中移除 ' + name + '（' + code + '）？')) {
-            removeStock(code);
-            refreshCurrentView(false);
-        }
-    }
-
-    /**
      * 初始化自选模块
-     * 主流程：创建渲染器实例 → 绑定事件 → 恢复二级菜单记忆
+     * 主流程：绑定事件 → 初始化分组栏（WlGroup，注入分组变化回调）
+     * 数据懒加载：main.js切到自选tab时通过onTabActivated触发
      */
     function init() {
-        // 创建异动风险视图渲染器实例（wl前缀DOM + 移除操作列）
-        wlRenderer = Renderer.createTableRenderer({
-            tableBody: 'wlTableBody',
-            loading: 'wlLoading',
-            loadingText: 'wlLoadingText',
-            error: 'wlError',
-            errorText: 'wlErrorText',
-            dataDate: null,     // 自选风险视图无日期元素
-            count100: 'wlCount100',
-            count200: 'wlCount200',
-            countTotal: 'wlCountTotal',
-            tableSection: 'wlTableSection',
-            table: 'wlStockTable'
-        }, { onRemove: handleRemove });
-        wlRenderer.init();
-
         bindEvents();
 
-        // 恢复上次选中的二级菜单（默认risk），仅恢复UI状态不拉数据
-        // 数据懒加载：main.js切到自选tab时通过onTabActivated触发
-        const saved = localStorage.getItem(SUBTAB_KEY);
-        applySubTabState(saved === 'browse' ? 'browse' : 'risk');
+        // 分组栏初始化（TODO16.2：渲染分组tabs+绑定切换/管理事件，变化时回调刷新浏览视图）
+        if (typeof WlGroup !== 'undefined') {
+            WlGroup.init({ onChange: onGroupChanged });
+        }
     }
 
     // 公开接口
     return {
         init,
         onTabActivated,
-        /**
-         * URL 指定二级子tab（?page=watchlist&sub=browse）
-         * 在 onTabActivated 之前由 main.js 调用，激活时从 localStorage 读取生效
-         * @param {string} sub - risk|browse
-         */
-        presetSub(sub) {
-            if (sub === 'risk' || sub === 'browse') {
-                try { localStorage.setItem(SUBTAB_KEY, sub); } catch (e) { /* 忽略 */ }
-            }
-        },
-        // 数据操作（供外部/测试调用）
+        // 数据操作（供外部/测试/WlGroup调用）
         getList,
+        saveList,
         addStock,
+        setStockGroup,
         removeStock,
         updateNote,
         // CSV（纯函数供Node测试）
@@ -1108,7 +1010,7 @@ const Watchlist = (function () {
         normalizeCodeField,
         exportCSV,
         // 视图刷新
-        refreshRisk,
-        refreshBrowse
+        refreshBrowse,
+        refreshCurrentView
     };
 })();

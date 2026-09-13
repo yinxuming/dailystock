@@ -9,27 +9,32 @@
  * 4. 点击刷新：清空缓存，强制重新获取
  *
  * 页面结构（左侧菜单栏四页）：
- * - market：市场行情（原有异动监控）
+ * - market：市场行情（TODO16.3双子tab：市场异动=全量按风险降序 / 关注异动=自定义监控个股）
  * - fupan：每日复盘（Fupan模块，四子tab：大盘/板块轮动/涨跌停/评分预测）
- * - watchlist：自选（Watchlist模块，二级菜单+CSV导入导出+搜索）
+ * - watchlist：自选（Watchlist模块，分组栏+浏览列表+查询异动列，CSV导入导出+搜索）
  * - settings：设置（原顶部设置弹窗迁入）
  * - tab切换状态持久化：进入首页时恢复最后一次选中的tab
+ *
+ * TODO16.3.1数据策略：市场异动显示全部结果（不再按onlyRisk过滤）按风险降序；
+ * 超过涨停限制的仅title提示（取消删除线）；默认提前天数8天（T+0~T+7）
  */
 const App = (function () {
 
     // 默认配置
     const DEFAULT_CONFIG = {
         topN: 50,               // 每个榜单获取数量
-        forwardDays: 4,         // 提前天数（默认4天：T+0~T+3）
+        forwardDays: 8,         // 提前天数（TODO16.3.1默认8天：T+0~T+7）
         autoRefresh: 0,         // 自动刷新间隔(秒)，0=关闭（默认不自动刷新）
-        onlyRisk: true,         // 仅显示有异动风险的股票
         concurrency: 2          // API并发数
     };
 
     // 左侧菜单tab持久化key
     const ACTIVE_TAB_KEY = 'unusual_active_tab';
 
-    // 自定义监控股票持久化key（异动监控页搜索添加，置顶显示，可删除）
+    // 市场行情页二级tab持久化key（TODO16.3：all=市场异动 / focus=关注异动）
+    const MKT_SUB_KEY = 'unusual_market_sub';
+
+    // 自定义监控股票持久化key（关注异动tab搜索添加，即"关注异动"监控列表）
     const CUSTOM_MONITOR_KEY = 'unusual_custom_monitor';
 
     // 运行状态
@@ -38,6 +43,9 @@ const App = (function () {
     let isLoading = false;
     let pendingRerun = false; // 运行中收到自定义监控增删请求时，本轮结束后补跑一次
     let selectedDate = null; // 用户选择的日期（YYYY-MM-DD），null=自动
+    let marketSub = 'all';   // 市场行情页当前二级tab（all/focus，TODO16.3）
+    let lastResults = [];    // 最近一次全量分析结果（含isCustom标记，双视图过滤渲染用）
+    let lastTargetDate = null; // 最近一次渲染目标交易日（二级tab切换重渲染用）
 
     /**
      * 从localStorage加载配置
@@ -47,10 +55,12 @@ const App = (function () {
             const saved = localStorage.getItem('unusual_config');
             if (saved) {
                 const parsed = JSON.parse(saved);
-                // 迁移旧配置：forwardDays从5改为4
-                if (parsed.forwardDays && parsed.forwardDays > 4) {
-                    parsed.forwardDays = 4;
+                // 配置迁移：旧版默认/钳制的forwardDays(<=4)一次性升级为8（TODO16.3.1）
+                if (parsed.forwardDays && parsed.forwardDays <= 4) {
+                    parsed.forwardDays = 8;
                 }
+                // onlyRisk配置废弃（TODO16.3.1改为全量显示），忽略旧值
+                delete parsed.onlyRisk;
                 config = { ...DEFAULT_CONFIG, ...parsed };
             }
         } catch (e) {
@@ -145,7 +155,8 @@ const App = (function () {
     }
 
     /**
-     * 初始化市场行情页搜索框（添加自定义监控股票，共用StockSearch组件）
+     * 初始化市场行情页搜索框（添加关注异动监控股票，共用StockSearch组件）
+     * TODO16.3：搜索添加即"关注异动"，添加成功自动切到关注异动tab查看
      */
     function initMarketSearch() {
         StockSearch.create({
@@ -154,7 +165,9 @@ const App = (function () {
             isExists: (code) => getCustomMonitors().some(s => s.code === code),
             onPick: (item) => {
                 if (addCustomMonitor(item.code, item.name, item.market)) {
-                    console.log('已添加自定义监控:', item.name, item.code);
+                    console.log('已添加关注异动监控:', item.name, item.code);
+                    // 添加成功切到关注异动tab立即查看（新增触发重算，切换本身也会重渲染）
+                    switchMarketSub('focus');
                 }
             }
         });
@@ -168,7 +181,6 @@ const App = (function () {
         document.getElementById('settingForwardDays').value = config.forwardDays;
         document.getElementById('settingAutoRefresh').value = config.autoRefresh;
         document.getElementById('settingRequestInterval').value = StockAPI.getRequestInterval();
-        document.getElementById('settingOnlyRisk').checked = config.onlyRisk;
 
         // 代理配置
         const proxyConfig = StockAPI.getProxyConfig();
@@ -191,7 +203,6 @@ const App = (function () {
         config.topN = parseInt(document.getElementById('settingTopN').value) || DEFAULT_CONFIG.topN;
         config.forwardDays = parseInt(document.getElementById('settingForwardDays').value) || DEFAULT_CONFIG.forwardDays;
         config.autoRefresh = parseInt(document.getElementById('settingAutoRefresh').value) || 0;
-        config.onlyRisk = document.getElementById('settingOnlyRisk').checked;
 
         // 请求间隔
         const intervalVal = parseInt(document.getElementById('settingRequestInterval').value) || 500;
@@ -263,7 +274,8 @@ const App = (function () {
                 const cachedResults = StockAPI.getResultCache();
                 if (cachedResults && cachedResults.length > 0) {
                     console.log('使用缓存结果，共' + cachedResults.length + '只');
-                    Renderer.renderTable(cachedResults, config.forwardDays, targetDate);
+                    lastResults = cachedResults;
+                    renderActiveMarketView(targetDate);
                     updateDataInfo(cachedResults, targetDate);
                     return;
                 }
@@ -311,9 +323,10 @@ const App = (function () {
             console.log('基准指数获取完成:', Array.from(indexKlineMap.keys()).join(', '));
 
             // 第3步：计算异动分析（传入指数K线数据和交易日偏移量）
-            // 全量分析不做onlyRisk过滤：自定义监控股票需始终展示（下方手动过滤）
+            // TODO16.3.1：全量分析不做风险过滤（市场异动tab显示全部按风险降序，
+            // 关注异动tab单独过滤自定义监控股），双视图在渲染阶段分流
             Renderer.showLoading('正在计算异动分析...');
-            let results = UnusualCalculator.analyzeStocks(
+            const results = UnusualCalculator.analyzeStocks(
                 allStocks,
                 klineMap,
                 indexKlineMap,
@@ -322,25 +335,18 @@ const App = (function () {
                 tradeDayOffset
             );
 
-            // 标记自定义监控行 + 过滤（自定义始终保留，其余按onlyRisk配置保留有风险的）
+            // 标记自定义监控行（关注异动tab数据源）
             const customCodeSet = new Set(customs.map(s => s.code));
             results.forEach(r => { if (customCodeSet.has(r.code)) r.isCustom = true; });
-            results = results.filter(r => r.isCustom || !config.onlyRisk || r.hasAchievableRisk);
 
-            // 自定义监控置顶（sort稳定，组内保持紧急度排序）
-            results.sort((a, b) => (b.isCustom ? 1 : 0) - (a.isCustom ? 1 : 0));
-
-            // 第4步：缓存识别结果
+            // 第4步：缓存识别结果（全量含自定义标记）
             if (results.length > 0) {
                 StockAPI.setResultCache(results);
             }
+            lastResults = results;
 
-            // 第5步：渲染结果
-            if (results.length === 0) {
-                Renderer.renderEmpty('当前无股票接近异动线');
-            } else {
-                Renderer.renderTable(results, config.forwardDays, targetDate);
-            }
+            // 第5步：按当前二级tab渲染（市场异动=全量除自定义 / 关注异动=仅自定义）
+            renderActiveMarketView(targetDate);
 
             // 更新数据日期和请求模式
             updateDataInfo(results, targetDate);
@@ -379,6 +385,98 @@ const App = (function () {
         dateHtml += ` <span style="color:#3b82f6;margin-left:8px">[${mode}]</span>`;
         dataDate.innerHTML = dateHtml;
         dataDate.style.color = '';
+    }
+
+    // ============================================================
+    // 市场行情页二级tab（TODO16.3：市场异动 / 关注异动）
+    // ============================================================
+
+    /**
+     * 渲染当前二级tab对应的视图（基于lastResults过滤，无需重新计算）
+     * 主流程：市场异动=全量结果剔除自定义监控股（按风险降序，即urgency升序）
+     *        → 关注异动=仅自定义监控股（个股异动空间展示）
+     * @param {string} [targetDate] 目标交易日（缺省用lastTargetDate）
+     */
+    function renderActiveMarketView(targetDate) {
+        if (targetDate) lastTargetDate = targetDate;
+        if (!lastResults.length) {
+            Renderer.renderEmpty(marketSub === 'focus'
+                ? '暂无关注异动股票，请通过右上角搜索添加个股监控'
+                : '当前无股票接近异动线');
+            return;
+        }
+        const rows = marketSub === 'focus'
+            ? lastResults.filter(r => r.isCustom)
+            : lastResults.filter(r => !r.isCustom);
+        if (!rows.length) {
+            Renderer.renderEmpty(marketSub === 'focus'
+                ? '暂无关注异动股票，请通过右上角搜索添加个股监控'
+                : '当前无股票接近异动线');
+            return;
+        }
+        Renderer.renderTable(rows, config.forwardDays, lastTargetDate);
+    }
+
+    /**
+     * 切换市场行情页二级tab（TODO16.3）
+     * 主流程：更新按钮态+持久化 → 基于已有结果重渲染视图 → 上报子tab变化（URL hash同步）
+     * @param {string} sub - all=市场异动 / focus=关注异动
+     * @param {boolean} [notify=true] 是否上报subchange（初始化恢复时不触发）
+     */
+    function switchMarketSub(sub, notify = true) {
+        if (sub !== 'all' && sub !== 'focus') return;
+        marketSub = sub;
+        try {
+            localStorage.setItem(MKT_SUB_KEY, sub);
+        } catch (e) { /* 忽略 */ }
+        document.querySelectorAll('[data-mkt-sub]').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.mktSub === sub);
+        });
+        renderActiveMarketView();
+        if (notify) {
+            document.dispatchEvent(new CustomEvent('dailystock:subchange', {
+                detail: { page: 'market', sub }
+            }));
+        }
+    }
+
+    /**
+     * 初始化市场行情页二级tab（绑定点击+恢复持久化状态）
+     */
+    function initMarketSubTabs() {
+        document.querySelectorAll('[data-mkt-sub]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                if (btn.dataset.mktSub !== marketSub) switchMarketSub(btn.dataset.mktSub);
+            });
+        });
+        let saved = 'all';
+        try {
+            saved = localStorage.getItem(MKT_SUB_KEY) || 'all';
+        } catch (e) { /* 忽略 */ }
+        switchMarketSub(saved === 'focus' ? 'focus' : 'all', false);
+    }
+
+    /**
+     * 查询个股异动空间（TODO16.1：自选列表"查询异动"列入口）
+     * 主流程：加入关注监控（已存在跳过）→ 切市场行情页-关注异动tab展示其异动计算
+     *        → 新增时结果缓存失效自动重算；已存在且有缓存则直接渲染
+     * @param {string} code - 股票代码
+     * @param {string} name - 股票名称
+     * @param {number} market - 市场编号（0=深/北，1=沪）
+     */
+    function showStockUnusual(code, name, market) {
+        if (!code) return;
+        const isNew = addCustomMonitor(code, name, market);
+        // 切到市场行情页关注异动tab（addCustomMonitor内部已触发重算/补跑）
+        switchTab('market');
+        switchMarketSub('focus');
+        // 已存在且未触发重算时，直接从缓存结果渲染关注视图
+        if (!isNew && !isLoading && lastResults.length) {
+            renderActiveMarketView();
+        }
+        if (isNew) {
+            console.log('已加入关注异动监控:', name, code);
+        }
     }
 
     /**
@@ -453,9 +551,10 @@ const App = (function () {
 
     // 各菜单支持的二级子tab（URL ?sub= 或 hash #/page/sub 均需命中此映射）
     const VALID_SUB_TABS = {
+        market:    ['all', 'focus'],               // TODO16.3：市场异动/关注异动
         fupan:     ['market', 'sectors', 'zt', 'score'],
-        watchlist: ['risk', 'browse'],
         settings:  ['monitor', 'cache', 'proxy'],
+        // watchlist无二级tab（TODO16.1异动风险tab移除，仅保留浏览视图+分组栏）
     };
 
     // 当前路由状态（URL hash 同步用：点击菜单/子tab/切换日期后地址栏始终可收藏）
@@ -494,8 +593,9 @@ const App = (function () {
         if (route.sub) {
             if (route.page === 'fupan' && typeof Fupan !== 'undefined' && Fupan.presetSub) {
                 Fupan.presetSub(route.sub);
-            } else if (route.page === 'watchlist' && typeof Watchlist !== 'undefined' && Watchlist.presetSub) {
-                Watchlist.presetSub(route.sub);
+            } else if (route.page === 'market' && ['all', 'focus'].includes(route.sub)) {
+                // TODO16.3：市场行情页二级tab直达（#/market/focus 关注异动）
+                switchMarketSub(route.sub, false);
             }
         }
         if (route.date && route.page === 'fupan' && typeof Fupan !== 'undefined' && Fupan.presetDate) {
@@ -652,21 +752,20 @@ const App = (function () {
         // 接收统一外壳的导航消息：
         // {type:'dailystock:navigate', page, sub?}
         //   page: market|fupan|watchlist|settings
-        //   sub:  可选二级子tab（fupan: market/sectors/zt/score; watchlist: risk/browse; settings: monitor/cache/proxy）
+        //   sub:  可选二级子tab（market: all/focus; fupan: market/sectors/zt/score; settings: monitor/cache/proxy）
         window.addEventListener('message', (event) => {
             const data = event.data;
             if (data && data.type === 'dailystock:navigate' &&
                 ['market', 'fupan', 'watchlist', 'settings'].includes(data.page)) {
                 switchTab(data.page);
-                // runtime 子tab跳转：fupan/watchlist 在已激活后通过模块自身 API 切
+                // runtime 子tab跳转：fupan 在已激活后通过模块自身 API 切
                 if (data.sub) {
-                    // 先预置 localStorage，再触发模块的切换逻辑
-                    if (data.page === 'fupan' && typeof Fupan !== 'undefined' && Fupan.presetSub) {
+                    if (data.page === 'market' && ['all', 'focus'].includes(data.sub)) {
+                        switchMarketSub(data.sub);
+                    } else if (data.page === 'fupan' && typeof Fupan !== 'undefined' && Fupan.presetSub) {
                         Fupan.presetSub(data.sub);
                         // 直接让 Fupan 重激活（或等待下次 loadDate 时读子tab）
                         if (typeof Fupan.switchSub === 'function') Fupan.switchSub(data.sub);
-                    } else if (data.page === 'watchlist' && typeof Watchlist !== 'undefined' && Watchlist.presetSub) {
-                        Watchlist.presetSub(data.sub);
                     } else if (data.page === 'settings' && VALID_SUB_TABS.settings.includes(data.sub)) {
                         const btn = document.querySelector(`[data-settings-tab="${data.sub}"]`);
                         if (btn) btn.click();
@@ -723,16 +822,16 @@ const App = (function () {
             await testProxyConnection();
         });
 
-        // 表头排序（每个表格的表头只排序自己的tbody，市场行情页与自选风险页互不影响）
-        // 普通浏览视图27列宽表由Watchlist模块基于行数据排序，此处排除
+        // 表头排序（事件委托：每个表格的表头只排序自己的tbody；支持动态增删的T+N列）
+        // 普通浏览视图29列宽表由Watchlist模块基于行数据排序，此处排除
         document.querySelectorAll('.stock-table').forEach(table => {
             if (table.id === 'wlBrowseTable') return;
             const tbody = table.querySelector('tbody');
             if (!tbody) return;
-            table.querySelectorAll('th[data-sort]').forEach(th => {
-                th.addEventListener('click', () => {
-                    sortTable(th.dataset.sort, th, tbody);
-                });
+            table.addEventListener('click', e => {
+                const th = e.target.closest('th[data-sort]');
+                if (!th || !table.contains(th)) return;
+                sortTable(th.dataset.sort, th, tbody);
             });
         });
 
@@ -843,25 +942,23 @@ const App = (function () {
             const cellsB = b.querySelectorAll('td');
 
             let valA, valB;
+            // T+N触发列：列索引 = 天数N + 8（排名0,名称1,代码2,日期3,当前幅度4,异动类型5,偏离值6,是否触发7,触发8开始）
+            // 通用triggerN匹配（TODO16.3.1：列数随forwardDays动态增减）
+            const trigMatch = field.match(/^trigger(\d+)$/);
 
-            switch (field) {
-                case 'name':
+            switch (true) {
+                case field === 'name':
                     valA = cellsA[1].textContent;
                     valB = cellsB[1].textContent;
                     return direction * valA.localeCompare(valB, 'zh');
-                case 'change':
+                case field === 'change':
                     valA = parseFloat(cellsA[4].textContent) || 0;
                     valB = parseFloat(cellsB[4].textContent) || 0;
                     break;
-                case 'trigger0':
-                case 'trigger1':
-                case 'trigger2':
-                case 'trigger3':
-                case 'trigger4':
-                    // 列索引：排名0,名称1,代码2,日期3,当前幅度4,异动类型5,偏离值6,是否触发7,触发8开始
-                    const colIndex = parseInt(field.replace('trigger', '')) + 8;
-                    valA = parseFloat(cellsA[colIndex].textContent) || 999;
-                    valB = parseFloat(cellsB[colIndex].textContent) || 999;
+                case !!trigMatch:
+                    // 触发格含换行触发价格（"10.07%\n12.34"），parseFloat取首个数值即涨幅
+                    valA = parseFloat(cellsA[parseInt(trigMatch[1]) + 8].textContent) || 999;
+                    valB = parseFloat(cellsB[parseInt(trigMatch[1]) + 8].textContent) || 999;
                     break;
                 default:
                     return 0;
@@ -881,11 +978,12 @@ const App = (function () {
     function init() {
         loadConfig();
         Renderer.init();
-        Watchlist.init();       // 自选模块（内部会恢复二级菜单记忆并懒加载）
+        Watchlist.init();       // 自选模块（内部分组栏初始化并懒加载浏览视图）
         initTabs();             // 左侧菜单tab（URL参数page优先，其次恢复上次选中tab）
         initEmbedded();         // 嵌入模式（统一外壳iframe加载时隐藏自身菜单+监听导航消息）
         initDatePicker();
-        initMarketSearch();    // 市场行情页搜索添加自定义监控股票
+        initMarketSubTabs();    // 市场行情页二级tab（TODO16.3：市场异动/关注异动，恢复持久化状态）
+        initMarketSearch();     // 市场行情页搜索添加关注异动监控股票
         initSettingsUI();       // 设置页为常驻页面，初始化时同步当前配置值
         initSettingsTabs();     // 设置页二级tab（监控参数/数据缓存/网络代理）
         bindEvents();
@@ -900,5 +998,12 @@ const App = (function () {
         init();
     }
 
-    return { init, run };
+    return {
+        init,
+        run,
+        // 关注异动监控（renderer操作列移除按钮转发）
+        removeCustomMonitor,
+        // TODO16.1：自选列表"查询异动"列入口（跳转个股异动空间=市场行情页关注异动tab）
+        showStockUnusual
+    };
 })();

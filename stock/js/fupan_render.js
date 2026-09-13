@@ -6,6 +6,8 @@
  * - renderSectors 板块轮动：全部/行业/概念涨跌榜TOP50（关注板块筛选）、近10日轮动矩阵（涨跌双榜+可调数量+固定身份色）
  * - renderZT      涨跌停：统计卡、分板块池列表（同花顺模式分类栏）、连板梯队（两行chip/晋级率/未晋级置灰）、晋级率、情绪
  * - renderScore   评分预测：Top5卡片（雷达图）、阈值设置（前端重算）、全量评分表、近5日回测正确率、模型说明
+ * - TODO15.3：涨跌停三池列表前置复选框列+批量工具栏（全选/批量加自选[分组选择/新建/拼音检索]/取消选择，
+ *   弹窗与分组存储由WlGroup模块提供）
  *
  * 渲染约定：
  * - 板型徽章色：一字板(红最强)>T字(橙)>厂字(黄)>回封(蓝)>换手(灰蓝)>未判定(灰)
@@ -639,8 +641,9 @@ const FupanRenderer = (function () {
             const upRows = focusOnly ? filterWatched(data.up, board) : data.up;
             const downRows = focusOnly ? filterWatched(data.down, board) : data.down;
             const emptyHint = focusOnly && !watchedNameSet('all').size;
-            const upHtml = emptyHint ? FOCUS_EMPTY_HINT : boardTable(upRows, true);
-            const downHtml = emptyHint ? FOCUS_EMPTY_HINT : boardTable(downRows, false);
+            // 未勾选仅看关注板块时，榜内已关注板块名称蓝色高亮（TODO15.2）
+            const upHtml = emptyHint ? FOCUS_EMPTY_HINT : boardTable(upRows, true, !focusOnly);
+            const downHtml = emptyHint ? FOCUS_EMPTY_HINT : boardTable(downRows, false, !focusOnly);
             const upTitle = focusOnly ? `涨幅榜（关注 ${upRows.length}）` : `涨幅榜 TOP50`;
             const downTitle = focusOnly ? `跌幅榜（关注 ${downRows.length}）` : `跌幅榜 TOP50`;
             const panel = document.createElement('div');
@@ -661,17 +664,24 @@ const FupanRenderer = (function () {
 
     /**
      * 生成板块榜单表格HTML（TOP50，数值格带data-v支持表头排序）
-     * @param {Array} list 板块数组
+     * @param {Array} list 板块数组（行含type: industry/concept）
      * @param {boolean} isUp 涨幅榜true/跌幅榜false
+     * @param {boolean} [highlightWatched] 未勾选仅看关注板块时true：已关注板块名称蓝色高亮（TODO15.2）
      * @returns {string} table HTML
      */
-    function boardTable(list, isUp) {
+    function boardTable(list, isUp, highlightWatched = false) {
         if (!list || !list.length) return '<div class="fp-empty">暂无数据</div>';
+        // 关注名称集合（行业/概念/全部各自匹配，同filterWatched口径）
+        const indW = watchedNameSet('industry');
+        const conW = watchedNameSet('concept');
+        const allW = watchedNameSet('all');
         const rows = list.slice(0, BOARD_TOP_N).map(s => {
             const inflow = s.mainNetInflow;
+            const isWatched = highlightWatched
+                && (s.type === 'industry' ? (indW.has(s.name) || allW.has(s.name)) : (conW.has(s.name) || allW.has(s.name)));
             return `
             <tr>
-                <td class="fp-sec-name" title="${esc(s.name)}">${esc(s.displayName || s.name)}</td>
+                <td class="fp-sec-name${isWatched ? ' fp-sec-watched' : ''}" title="${esc(s.name)}${isWatched ? '（已关注板块）' : ''}">${esc(s.displayName || s.name)}</td>
                 <td class="${FupanData.changeClass(s.change)}" data-v="${s.change ?? ''}">${FupanData.formatChange(s.change)}%</td>
                 <td data-v="${s.upCount ?? ''}">${s.upCount ?? '--'}</td>
                 <td data-v="${s.downCount ?? ''}">${s.downCount ?? '--'}</td>
@@ -976,7 +986,7 @@ const FupanRenderer = (function () {
     }
 
     /**
-     * 渲染右侧池列表（按分类过滤+默认排序）
+     * 渲染右侧池列表（按分类过滤+默认排序；TODO15.3：批量工具栏+复选框列+批量加自选）
      * @param {HTMLElement} listEl 列表容器
      * @param {Object} day 单日复盘数据
      * @param {string} cat 分类（'__all__'=全部）
@@ -989,8 +999,99 @@ const FupanRenderer = (function () {
         if (cat !== '__all__') rows = rows.filter(s => stockSector(s) === cat);
         rows = sortPoolRows(rows, pool);
         const catLabel = cat === '__all__' ? '全部' : cat;
+        // 批量工具栏（TODO15.3：勾选行后批量加自选，支持分组选择/新建/拼音检索）
+        const batchBar = `
+            <div class="fp-pool-batch">
+                <span class="fp-pool-batch-count">已选 <b data-fp-sel-count>0</b> / ${rows.length} 只</span>
+                <button class="btn btn-primary btn-sm" data-fp-batch-add title="勾选股票批量加入自选（可选分组/新建分组）">批量加自选</button>
+                <button class="btn btn-secondary btn-sm" data-fp-batch-clear>取消选择</button>
+            </div>`;
         const table = pool === 'zt' ? ztPoolTable(rows) : (pool === 'dt' ? dtPoolTable(rows) : zbPoolTable(rows));
-        listEl.innerHTML = `<h4 class="fp-chart-title">${esc(poolNames[pool])}：${esc(catLabel)}（${rows.length}只）</h4>${table}`;
+        listEl.innerHTML = `<h4 class="fp-chart-title">${esc(poolNames[pool])}：${esc(catLabel)}（${rows.length}只）</h4>${batchBar}${table}`;
+        bindPoolBatch(listEl);
+    }
+
+    /**
+     * 股票代码推导市场编号（东财secid市场位：6开头=沪市1，其余=深/北0）
+     * @param {string} code 股票代码
+     * @returns {number} 1=沪 0=深/北
+     */
+    function marketOfCode(code) {
+        return String(code).charAt(0) === '6' ? 1 : 0;
+    }
+
+    /**
+     * 批量选择复选框单元格HTML（TODO15.3）
+     * @param {Object} s 池内股票
+     * @returns {string} td HTML
+     */
+    function poolCheckTd(s) {
+        return `<td class="fp-pool-check-td"><input type="checkbox" class="fp-pool-check" data-code="${esc(s.code)}" data-name="${esc(s.name)}" title="勾选后可批量加自选"></td>`;
+    }
+
+    /** 批量选择表头单元格HTML（全选框，阻止冒泡避免触发表头排序） */
+    const POOL_CHECK_TH = '<th class="fp-pool-check-th"><input type="checkbox" data-fp-check-all title="全选/全不选"></th>';
+
+    /**
+     * 绑定池列表批量操作（TODO15.3：行复选框/全选/批量加自选/取消选择）
+     * 主流程：行复选框change→更新已选计数与全选态 → 全选框change→批量勾选/取消
+     *        → 批量加自选：收集勾选股票打开分组选择弹窗（WlGroup.openAddToGroupModal，
+     *          支持已有分组拼音检索/新建分组）→ 添加完成清空勾选
+     * @param {HTMLElement} listEl 池列表容器
+     */
+    function bindPoolBatch(listEl) {
+        const countEl = listEl.querySelector('[data-fp-sel-count]');
+        const checkAll = listEl.querySelector('[data-fp-check-all]');
+        if (!countEl || !checkAll) return;
+
+        /**
+         * 刷新已选计数与全选框状态
+         */
+        const refresh = () => {
+            const checks = Array.from(listEl.querySelectorAll('.fp-pool-check'));
+            const checked = checks.filter(c => c.checked);
+            countEl.textContent = checked.length;
+            checkAll.checked = checks.length > 0 && checked.length === checks.length;
+        };
+
+        // 全选框点击不触发表头排序（makeSortable监听th click）
+        checkAll.addEventListener('click', e => e.stopPropagation());
+
+        listEl.addEventListener('change', e => {
+            if (e.target.classList.contains('fp-pool-check')) {
+                refresh();
+            } else if (e.target === checkAll) {
+                listEl.querySelectorAll('.fp-pool-check').forEach(c => { c.checked = checkAll.checked; });
+                refresh();
+            }
+        });
+
+        // 批量加自选：收集勾选行 → 分组选择弹窗（支持新建分组/拼音首字母检索）
+        const addBtn = listEl.querySelector('[data-fp-batch-add]');
+        if (addBtn) addBtn.addEventListener('click', () => {
+            const stocks = Array.from(listEl.querySelectorAll('.fp-pool-check:checked')).map(c => ({
+                code: c.dataset.code,
+                name: c.dataset.name,
+                market: marketOfCode(c.dataset.code)
+            }));
+            if (!stocks.length) return;
+            if (typeof WlGroup === 'undefined') { alert('分组模块未加载，无法批量加自选'); return; }
+            WlGroup.openAddToGroupModal(stocks, {
+                title: '批量加自选',
+                onDone: () => {
+                    // 添加完成清空勾选
+                    listEl.querySelectorAll('.fp-pool-check').forEach(c => { c.checked = false; });
+                    refresh();
+                }
+            });
+        });
+
+        // 取消选择
+        const clearBtn = listEl.querySelector('[data-fp-batch-clear]');
+        if (clearBtn) clearBtn.addEventListener('click', () => {
+            listEl.querySelectorAll('.fp-pool-check').forEach(c => { c.checked = false; });
+            refresh();
+        });
     }
 
     /**
@@ -1016,6 +1117,7 @@ const FupanRenderer = (function () {
         if (!pool || !pool.length) return '<div class="fp-empty">当日无涨停</div>';
         const rows = pool.map((s, i) => `
             <tr>
+                ${poolCheckTd(s)}
                 <td class="col-rank" data-v="${i + 1}">${i + 1}</td>
                 <td class="col-name">${stockLink(s.code, s.name)}</td>
                 <td class="col-code">${esc(s.code)}</td>
@@ -1040,6 +1142,7 @@ const FupanRenderer = (function () {
             <div class="table-wrapper">
                 <table class="stock-table fp-pool-table">
                     <thead><tr>
+                        ${POOL_CHECK_TH}
                         <th>#</th><th>名称</th><th>代码</th><th>现价</th><th>涨跌幅%</th><th>成交额</th><th>流通市值</th>
                         <th>换手%</th><th>封单额</th><th title="封单额/成交额，越大封板越坚决">封成比</th>
                         <th>首次封板</th><th>最后封板</th><th>开板</th><th>连板</th><th>几天几板</th><th>板型</th>
@@ -1059,6 +1162,7 @@ const FupanRenderer = (function () {
         if (!pool || !pool.length) return '<div class="fp-empty">当日无跌停</div>';
         const rows = pool.map((s, i) => `
             <tr>
+                ${poolCheckTd(s)}
                 <td class="col-rank" data-v="${i + 1}">${i + 1}</td>
                 <td class="col-name">${stockLink(s.code, s.name)}</td>
                 <td class="col-code">${esc(s.code)}</td>
@@ -1075,6 +1179,7 @@ const FupanRenderer = (function () {
             <div class="table-wrapper">
                 <table class="stock-table fp-pool-table">
                     <thead><tr>
+                        ${POOL_CHECK_TH}
                         <th>#</th><th>名称</th><th>代码</th><th>现价</th><th>跌跌幅%</th><th>成交额</th>
                         <th>换手%</th><th>封单额</th><th>最后封板</th><th>连续跌停</th><th>行业</th>
                     </tr></thead>
@@ -1096,6 +1201,7 @@ const FupanRenderer = (function () {
                 ? (s.price - s.limitPrice) / s.limitPrice * 100 : null;
             return `
             <tr>
+                ${poolCheckTd(s)}
                 <td class="col-rank" data-v="${i + 1}">${i + 1}</td>
                 <td class="col-name">${stockLink(s.code, s.name)}</td>
                 <td class="col-code">${esc(s.code)}</td>
@@ -1114,6 +1220,7 @@ const FupanRenderer = (function () {
             <div class="table-wrapper">
                 <table class="stock-table fp-pool-table">
                     <thead><tr>
+                        ${POOL_CHECK_TH}
                         <th>#</th><th>名称</th><th>代码</th><th>现价</th><th>涨跌幅%</th><th>涨停价</th><th>距涨停%</th>
                         <th>成交额</th><th>换手%</th><th>首次封板</th><th>炸板次数</th><th>行业</th>
                     </tr></thead>
@@ -1209,7 +1316,9 @@ const FupanRenderer = (function () {
      * @returns {string} chip HTML
      */
     function ladderChip(s, roleOn, typeOn, isFailed, changeByCode) {
-        const title = `${s.name} ${s.industry || ''} 首封${s.firstSealTime || '--'} 封单${FupanData.formatAmount(s.sealFund)}${isFailed ? '（昨日涨停今日未晋级）' : ''}`;
+        // tip：尾封时间（TODO15.1由首封改为最后封板时间）+封单，末尾追加成交额/实际换手率
+        const turnoverTxt = s.turnover !== null && s.turnover !== undefined ? s.turnover.toFixed(2) + '%' : '--';
+        const title = `${s.name} ${s.industry || ''} 尾封${s.lastSealTime || '--'} 封单${FupanData.formatAmount(s.sealFund)} 成交${FupanData.formatAmount(s.amount)} 换手${turnoverTxt}${isFailed ? '（昨日涨停今日未晋级）' : ''}`;
         const l1 = `<span class="fp-chip-l1"><b class="fp-chip-name">${stockLink(s.code, s.name)}</b><i class="fp-chip-stats">${esc(s.stats || '')}</i></span>`;
         let l2 = '';
         if (isFailed) {

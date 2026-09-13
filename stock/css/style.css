@@ -497,9 +497,18 @@ body.embedded .app-layout {
     font-style: italic;
 }
 
+/* TODO16.3.1：超过涨停限制的取消删除线，正常显示（仅title提示不可能触发） */
 .trigger-impossible {
     color: #334155;
-    text-decoration: line-through;
+}
+
+/* ===== T+N触发价格小字（TODO16.3.3：触发涨幅换行显示触发价格） ===== */
+.trigger-price {
+    display: block;
+    font-size: 11px;
+    font-weight: 400;
+    opacity: 0.75;
+    margin-top: 1px;
 }
 
 /* ===== 是否触发标签 ===== */
@@ -1072,6 +1081,12 @@ body.embedded .app-layout {
     overflow: hidden;
     text-overflow: ellipsis;
     color: #e2e8f0;
+}
+
+/* 已关注板块名称蓝色高亮（TODO15.2：未勾选仅看关注板块时在榜单中标出） */
+.fp-sec-name.fp-sec-watched {
+    color: #60a5fa;
+    font-weight: 600;
 }
 
 /* 榜单/池子切换按钮组 */
@@ -2383,6 +2398,331 @@ tr.fp-cat-selected td.fp-cat-name {
     .fp-cat-bar {
         position: static;
         flex: none;
+        width: 100%;
+    }
+}
+
+/* ============================================================
+ * TODO15.3：涨跌停池批量选择（复选框列+批量工具栏）
+ * ============================================================ */
+.fp-pool-batch {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 6px 0;
+    flex-wrap: wrap;
+}
+
+.fp-pool-batch-count {
+    font-size: 12px;
+    color: #64748b;
+}
+
+.fp-pool-batch-count b {
+    color: #93c5fd;
+}
+
+/* 行复选框列（阻止触发行点击/表头排序） */
+.fp-pool-check-td {
+    width: 30px;
+    min-width: 30px;
+    text-align: center;
+}
+
+.fp-pool-check {
+    cursor: pointer;
+    accent-color: #3b82f6;
+}
+
+/* 全选表头列（全选框阻止冒泡避免触发表头排序） */
+.fp-pool-check-th {
+    width: 30px;
+    min-width: 30px;
+    text-align: center;
+}
+
+/* ============================================================
+ * TODO16.2：自选分组栏 + 分组管理/加自选分组弹窗
+ * ============================================================ */
+.wl-group-bar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 8px 0 10px;
+    padding: 6px 10px;
+    background: rgba(30, 41, 59, 0.45);
+    border: 1px solid rgba(51, 65, 85, 0.6);
+    border-radius: 8px;
+    overflow-x: auto;
+}
+
+.wl-gtab {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 12px;
+    border: 1px solid rgba(51, 65, 85, 0.8);
+    border-radius: 14px;
+    background: transparent;
+    color: #94a3b8;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s;
+}
+
+.wl-gtab:hover {
+    border-color: #3b82f6;
+    color: #cbd5e1;
+}
+
+.wl-gtab.active {
+    background: rgba(59, 130, 246, 0.18);
+    border-color: #3b82f6;
+    color: #93c5fd;
+    font-weight: 600;
+}
+
+/* 分组数量角标 */
+.wl-gtab-count {
+    font-style: normal;
+    font-size: 11px;
+    padding: 0 6px;
+    border-radius: 8px;
+    background: rgba(51, 65, 85, 0.9);
+    color: #94a3b8;
+}
+
+.wl-gtab.active .wl-gtab-count {
+    background: rgba(59, 130, 246, 0.35);
+    color: #bfdbfe;
+}
+
+/* 管理按钮 */
+.wl-gtab-manage {
+    margin-left: auto;
+    border-style: dashed;
+}
+
+/* 浏览表分组列（TODO16.2：点击修改分组） */
+.bt-group {
+    cursor: pointer;
+    color: #93c5fd;
+    white-space: nowrap;
+}
+
+.bt-group:hover {
+    text-decoration: underline;
+}
+
+/* 操作列多按钮间距（异动+移除） */
+.bt-op .btn + .btn {
+    margin-left: 4px;
+}
+
+/* ===== 通用模态弹窗 ===== */
+.wl-modal-mask {
+    position: fixed;
+    inset: 0;
+    background: rgba(2, 6, 23, 0.65);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 16px;
+}
+
+.wl-modal {
+    background: #1e293b;
+    border: 1px solid rgba(51, 65, 85, 0.9);
+    border-radius: 10px;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+    min-width: 320px;
+    max-width: 480px;
+    max-height: 80vh;
+    overflow-y: auto;
+    padding: 16px 18px;
+}
+
+.wl-modal-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: #e2e8f0;
+    margin-bottom: 12px;
+}
+
+.wl-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 14px;
+}
+
+/* ===== 分组管理弹窗 ===== */
+.wl-mg-new {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.wl-mg-new-input {
+    flex: 1;
+}
+
+.wl-mg-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.wl-mg-empty {
+    color: #64748b;
+    font-size: 13px;
+    padding: 16px 0;
+    text-align: center;
+}
+
+.wl-mg-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: rgba(30, 41, 59, 0.6);
+    border: 1px solid rgba(51, 65, 85, 0.5);
+}
+
+.wl-mg-name {
+    flex: 1;
+    font-size: 13px;
+    color: #e2e8f0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.wl-mg-count {
+    font-size: 12px;
+    color: #64748b;
+    white-space: nowrap;
+}
+
+.wl-mg-ops {
+    display: flex;
+    gap: 4px;
+}
+
+.wl-mg-btn {
+    width: 26px;
+    height: 26px;
+    border: 1px solid rgba(51, 65, 85, 0.8);
+    border-radius: 5px;
+    background: transparent;
+    color: #94a3b8;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.wl-mg-btn:hover {
+    border-color: #3b82f6;
+    color: #cbd5e1;
+}
+
+.wl-mg-btn.wl-mg-del:hover {
+    border-color: #ef4444;
+    color: #ef4444;
+}
+
+/* ===== 加自选分组弹窗（TODO15.3，汉字/拼音检索下拉） ===== */
+.wl-ag-field {
+    margin-bottom: 12px;
+}
+
+.wl-ag-label {
+    font-size: 12px;
+    color: #94a3b8;
+    margin-bottom: 6px;
+}
+
+.wl-ag-inputwrap {
+    position: relative;
+}
+
+.wl-ag-input {
+    width: 100%;
+}
+
+.wl-ag-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    max-height: 200px;
+    overflow-y: auto;
+    background: #0f172a;
+    border: 1px solid rgba(51, 65, 85, 0.9);
+    border-radius: 6px;
+    z-index: 10;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.wl-ag-opt {
+    padding: 7px 10px;
+    font-size: 13px;
+    color: #cbd5e1;
+    cursor: pointer;
+}
+
+.wl-ag-opt:hover {
+    background: rgba(59, 130, 246, 0.12);
+}
+
+.wl-ag-opt-active,
+.wl-ag-opt.wl-ag-opt-active {
+    background: rgba(59, 130, 246, 0.22);
+    color: #93c5fd;
+    font-weight: 600;
+}
+
+.wl-ag-none {
+    padding: 10px;
+    font-size: 12px;
+    color: #64748b;
+    text-align: center;
+}
+
+.wl-ag-selected {
+    font-size: 12px;
+    color: #64748b;
+    margin-top: 6px;
+}
+
+.wl-ag-selected b {
+    color: #93c5fd;
+}
+
+.wl-ag-newrow {
+    display: flex;
+    gap: 8px;
+}
+
+.wl-ag-new-input {
+    flex: 1;
+}
+
+/* 窄屏：分组栏允许横向滚动、弹窗占满宽度 */
+@media (max-width: 768px) {
+    .wl-group-bar {
+        flex-wrap: nowrap;
+    }
+
+    .wl-modal {
+        min-width: 0;
         width: 100%;
     }
 }

@@ -646,6 +646,10 @@ const UnusualCalculator = (function () {
         const urgency = dominantRule.triggers[0];
         const latestDate = klines.length > 0 ? klines[klines.length - 1].date : '';
 
+        // 当前价/昨收价（TODO16.3.3：触发价格换行展示用，纯数据由渲染层计算触发价）
+        const price = klines.length > 0 ? klines[klines.length - 1].close : null;
+        const prevClose = klines.length > 1 ? klines[klines.length - 2].close : null;
+
         return {
             code: stock.code,
             name: stock.name,
@@ -654,11 +658,43 @@ const UnusualCalculator = (function () {
             gain5d: stock.gain5d || null,
             limitUpRate: limitUpRate,
             date: latestDate,
+            price: price,
+            prevClose: prevClose,
             rules: allRuleResults,
             hasAchievableRisk,
             urgency,
             dominantRule: dominantRule.ruleName
         };
+    }
+
+    /**
+     * 计算T+N触发价格（TODO16.3.3，纯函数供渲染层与Node测试复用）
+     * 口径与触发值展示对齐：
+     * - T+0显示"当日总涨幅"（基于昨收）：触发价 = 昨收 * (1 + 涨幅)
+     * - T+0不可触发时显示"额外涨幅"（基于现价）：触发价 = 现价 * (1 + 涨幅)
+     * - T+N(N>=1)当日涨幅从现价起算（未来日昨收=现价）：触发价 = 现价 * (1 + 涨幅)
+     * @param {number|null} price 现价（最新收盘价）
+     * @param {number|null} prevClose 昨收价
+     * @param {number} day 天数（0=T+0）
+     * @param {number|null} displayVal 展示的触发涨幅百分比
+     * @param {Object} rule 规则结果（含rawTrigger0，判断T+0是否展示额外涨幅）
+     * @returns {number|null} 触发价格（数据不足返回null）
+     */
+    function calcTriggerPrice(price, prevClose, day, displayVal, rule) {
+        if (displayVal === null || displayVal === undefined || price === null || price === undefined) return null;
+        if (displayVal === 0) return price; // 已触发：当前价即触发价
+        // T+0展示额外涨幅（不可触发回退rawTrigger0）→ 基准为现价；否则T+0基准为昨收
+        const rawShown = day === 0 && rule
+            && rule.rawTrigger0 !== null && rule.rawTrigger0 !== undefined
+            && rule.displayTriggers && rule.displayTriggers[0] === rule.rawTrigger0;
+        let base;
+        if (day === 0 && !rawShown) {
+            if (prevClose === null || prevClose === undefined) return null;
+            base = prevClose;
+        } else {
+            base = price;
+        }
+        return base * (1 + displayVal / 100);
     }
 
     /**
@@ -729,6 +765,7 @@ const UnusualCalculator = (function () {
         getMaxPossibleGain,
         analyzeStock,
         analyzeStocks,
+        calcTriggerPrice,
         getIndexSecid,
         // 测试用
         findLocalMinima,

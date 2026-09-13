@@ -10,6 +10,8 @@
  * 4. 配置持久化：localStorage 保存，跨会话生效（复用 FupanData 设置工具）
  * 5. 预测回溯方案调优（TODO13.2）：evalSchemeAccuracy 回测Top5命中率、
  *    optimizeScheme 权重爬山调优（昨日/3日/5日最准方案）、configsEqual 方案一致性判定
+ *    TODO15.4增强：多尺度大步长(±2~±12)+位置加权命中(wHits)+Top5变化数(top5Diff)目标，
+ *    保证各最准方案参数/分数/Top5有实际差异（已知结果求最优参数）
  *
  * 设计说明：
  * - 维度权重调整时，各维原始分按 默认满分→新满分 等比折算（权重=默认时原样返回，
@@ -522,33 +524,59 @@ const FupanScoring = (function () {
     }
 
     /**
-     * 评估配置在回测周期上的Top5命中情况（TODO13.2预测回溯）
+     * 评估配置在回测周期上的Top5命中情况（TODO13.2预测回溯；TODO15.4增强）
      * 命中判定：预测日Top5标的在次日涨停池中且连板数更高（晋级成功）
+     * TODO15.4新增两个更细粒度指标（仅调优内部使用，展示口径仍用rate）：
+     * - wHits：位置加权命中数（第1名命中记5分…第5名记1分），
+     *   区分"命中数相同但Top5排序更优"的方案，奖励顺序变化
+     * - top5Diff：与基准配置Top5逐位不同的数量（传入baseTop5时计算），
+     *   命中率与加权分均平手时，优先取Top5变化更大的方案保证各方案有差异
      * @param {Array<{day:Object, next:Object}>} cycles 回测周期（day=预测日数据，next=次日结果数据）
      * @param {Object} config 评分配置
-     * @returns {{hits:number, total:number, rate:number|null}} 命中数/预测总数/命中率（total=0时rate=null）
+     * @param {Array<Array<string>>|null} [baseTop5] 基准配置各周期的Top5代码序列（调优时传入）
+     * @returns {{hits:number, total:number, rate:number|null, wHits:number, top5Diff:number}}
      */
-    function evalSchemeAccuracy(cycles, config) {
-        let hits = 0, total = 0;
-        (cycles || []).forEach(c => {
+    function evalSchemeAccuracy(cycles, config, baseTop5) {
+        let hits = 0, total = 0, wHits = 0, top5Diff = 0;
+        (cycles || []).forEach((c, ci) => {
             if (!c || !c.day || !c.next) return;
             const ranked = rescoreDay(c.day, config);
-            (ranked.top5 || []).forEach(s => {
-                const ns = (c.next.ztpool || []).find(x => x.code === s.code);
+            const top5 = ranked.top5 || [];
+            const codes = top5.map(s => s.code);
+            top5.forEach((s, i) => {
                 total += 1;
-                if (ns && (ns.lbCount || 1) > (s.lbCount || 1)) hits += 1;
+                const ns = (c.next.ztpool || []).find(x => x.code === s.code);
+                if (ns && (ns.lbCount || 1) > (s.lbCount || 1)) {
+                    hits += 1;
+                    wHits += 5 - i; // 第1名权重5…第5名权重1
+                }
             });
+            if (baseTop5 && baseTop5[ci]) {
+                codes.forEach((code, i) => {
+                    if (baseTop5[ci][i] !== code) top5Diff += 1;
+                });
+            }
         });
-        return { hits, total, rate: total ? hits / total : null };
+        return { hits, total, rate: total ? hits / total : null, wHits, top5Diff };
     }
 
     /**
-     * 模型参数爬山调优（TODO13.2：根据T+1实际结果微调权重，确定性算法）
-     * 主流程：以base配置为起点 → 逐维尝试±2/±4权重微调 → 保留命中率提升最大的调整
-     *         → 最多3轮直至无改进；平手时取与base总偏差更小的配置（防过拟合大幅偏移）
+     * 模型参数爬山调优（TODO13.2；TODO15.4增强：已知结果求最优参数）
+     * 主流程：以base为起点 → 逐维多尺度大步长(±2/±4/±8/±12)爬山 → 最多8轮直至无改进
+     *
+     * TODO15.4核心改进（解决"各方案分数差别不大甚至没有变化"）：
+     * 1. 步长加大且多尺度：旧版仅±2/±4步长探索半径过小，参数无法靠近真实最优；
+     *    新版±2~±12粗细结合，参数调整幅度尽可能接近次日准确值
+     * 2. 目标函数细化（字典序）：命中率 > 位置加权命中数(wHits) > Top5较基准变化数
+     *    - wHits区分"命中数相同但排序更优"，奖励Top5顺序变化
+     *    - 旧版平手时取与base总偏差更小的配置（主动压制变化，导致各方案趋同）；
+     *      新版平手时取Top5变化更大的配置，保证各"最准方案"分数与Top5内容有实际差异
+     * 3. 轮数3→8：大步长探索后允许更多轮收敛
+     * 确定性算法（固定维度顺序+固定步长序列+固定比较规则），同一数据集结果可复现
+     *
      * @param {Array<{day:Object, next:Object}>} cycles 回测周期（至少1个周期）
      * @param {Object} baseConfig 起始配置（当前方案；veto/advice保持不变，仅调权重）
-     * @returns {{config:Object, accuracy:{hits:number,total:number,rate:number|null}}} 调优后配置与命中率
+     * @returns {{config:Object, accuracy:{hits:number,total:number,rate:number|null,wHits:number,top5Diff:number}}}
      */
     function optimizeScheme(cycles, baseConfig) {
         const dims = Object.keys(DEFAULT_WEIGHTS);
@@ -559,15 +587,25 @@ const FupanScoring = (function () {
         if (!cycles || !cycles.length || baseAcc.total === 0) {
             return { config: cloneConfig(baseConfig), accuracy: baseAcc };
         }
-        /**
-         * 权重与base的总偏差（平手时的次序偏好）
-         */
-        const devOf = w => dims.reduce((a, k) => a + Math.abs(w[k] - baseW[k]), 0);
+        // 基准各周期Top5代码序列（top5Diff计算基准，仅一次）
+        const baseTop5 = cycles.map(c => (rescoreDay(c.day, baseConfig).top5 || []).map(s => s.code));
+        let best = evalSchemeAccuracy(cycles, baseConfig, baseTop5); // top5Diff=0
         let bestW = Object.assign({}, baseW);
-        let bestAcc = baseAcc;
-        let bestDev = 0;
-        const DELTAS = [-4, -2, 2, 4];
-        for (let round = 0; round < 3; round++) {
+
+        /**
+         * 候选是否优于当前最优（字典序：rate > wHits > top5Diff）
+         */
+        const better = (a, b) => {
+            if (a.rate > b.rate + 1e-9) return true;
+            if (Math.abs(a.rate - b.rate) <= 1e-9) {
+                if (a.wHits > b.wHits) return true;
+                if (a.wHits === b.wHits && a.top5Diff > b.top5Diff) return true;
+            }
+            return false;
+        };
+
+        const DELTAS = [-12, -8, -4, -2, 2, 4, 8, 12];
+        for (let round = 0; round < 8; round++) {
             let improved = false;
             dims.forEach(k => {
                 DELTAS.forEach(d => {
@@ -575,12 +613,10 @@ const FupanScoring = (function () {
                     const v = Math.round(w[k] + d);
                     if (v < 0 || v > 50 || v === w[k]) return;
                     w[k] = v;
-                    const acc = evalSchemeAccuracy(cycles, Object.assign({}, baseConfig, { weights: w }));
+                    const acc = evalSchemeAccuracy(cycles, Object.assign({}, baseConfig, { weights: w }), baseTop5);
                     if (acc.total === 0) return;
-                    const dev = devOf(w);
-                    if (acc.rate > bestAcc.rate + 1e-9
-                        || (Math.abs(acc.rate - bestAcc.rate) <= 1e-9 && dev < bestDev)) {
-                        bestW = w; bestAcc = acc; bestDev = dev; improved = true;
+                    if (better(acc, best)) {
+                        bestW = w; best = acc; improved = true;
                     }
                 });
             });
@@ -588,7 +624,7 @@ const FupanScoring = (function () {
         }
         return {
             config: Object.assign({}, baseConfig, { weights: bestW }),
-            accuracy: bestAcc
+            accuracy: { hits: best.hits, total: best.total, rate: best.rate, wHits: best.wHits, top5Diff: best.top5Diff }
         };
     }
 

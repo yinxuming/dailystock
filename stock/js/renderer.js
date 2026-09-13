@@ -14,7 +14,9 @@
  * - 是否触发列：标记是否已触发异动
  * - 板块颜色区分：创业板/科创板/北证用不同颜色标识
  * - 股票代码超链接到东方财富详情页
- * - T+N触发值：不可触发的标记为灰色（超过涨停限制）
+ * - T+N触发值：TODO16.3.3 涨幅换行显示触发价格（口径见calculator.calcTriggerPrice）；
+ *   不可触发仅title提示（TODO16.3.1取消删除线样式）
+ * - T+N列数与提前天数动态同步（TODO16.3.1：默认8天，表头列随forwardDays增减）
  */
 const Renderer = (function () {
 
@@ -228,11 +230,43 @@ const Renderer = (function () {
         }
 
         /**
+         * 同步表头T+N触发列数量与forwardDays一致（TODO16.3.1：默认提前8天，列数动态增减）
+         * 主流程：不足则从最后一个trigger列后补插 → 超出则移除（保持data-sort="triggerN"索引连续）
+         * @param {number} forwardDays - 提前天数
+         */
+        function syncTriggerColumns(forwardDays) {
+            const tr = elements.table.querySelector('thead tr');
+            if (!tr) return;
+            for (let day = 0; day < forwardDays; day++) {
+                if (tr.querySelector(`th[data-sort="trigger${day}"]`)) continue;
+                // 找锚点：最后一个已存在的trigger列th
+                let anchor = null;
+                for (let d = day - 1; d >= 0; d--) {
+                    anchor = tr.querySelector(`th[data-sort="trigger${d}"]`);
+                    if (anchor) break;
+                }
+                const th = document.createElement('th');
+                th.className = 'col-trigger';
+                th.dataset.sort = 'trigger' + day;
+                th.textContent = 'T+' + day;
+                tr.insertBefore(th, anchor ? anchor.nextSibling : null);
+            }
+            // 移除多余trigger列（forwardDays之后）
+            let day = forwardDays;
+            let th;
+            while ((th = tr.querySelector(`th[data-sort="trigger${day}"]`))) {
+                th.remove();
+                day++;
+            }
+        }
+
+        /**
          * 更新表头的T+N列为实际交易日日期（限定在本实例的表格内查找）
          * @param {string} baseDate - 基准日期（K线最新日期）YYYY-MM-DD
          * @param {number} forwardDays - 提前天数
          */
         function updateTableHeaders(baseDate, forwardDays) {
+            syncTriggerColumns(forwardDays);
             for (let day = 0; day < forwardDays; day++) {
                 const th = elements.table.querySelector('th[data-sort="trigger' + day + '"]');
                 if (!th) continue;
@@ -384,7 +418,7 @@ const Renderer = (function () {
                 }
                 tr.appendChild(tdTriggered);
 
-                // T+0 到 T+(forwardDays-1) 触发值
+                // T+0 到 T+(forwardDays-1) 触发值（TODO16.3.3：触发涨幅换行显示触发价格）
                 for (let day = 0; day < forwardDays; day++) {
                     const td = document.createElement('td');
                     td.className = 'col-trigger';
@@ -396,9 +430,18 @@ const Renderer = (function () {
                     const achievable = UnusualCalculator.isTriggerAchievable(rawTrigger, result.limitUpRate, day);
 
                     if (dayTrigger !== null && dayTrigger !== undefined) {
-                        td.textContent = formatTrigger(dayTrigger);
                         td.classList.add(getTriggerClass(dayTrigger, achievable, result.limitUpRate));
-                        // 不可触发的加title提示
+                        // 触发价格：第二行小字（口径见calculator.calcTriggerPrice）
+                        const trigPrice = UnusualCalculator.calcTriggerPrice
+                            ? UnusualCalculator.calcTriggerPrice(result.price, result.prevClose, day, dayTrigger, dominantRule)
+                            : null;
+                        if (trigPrice !== null && trigPrice !== undefined) {
+                            td.innerHTML = formatTrigger(dayTrigger)
+                                + '<br><span class="trigger-price">' + trigPrice.toFixed(2) + '</span>';
+                        } else {
+                            td.textContent = formatTrigger(dayTrigger);
+                        }
+                        // 不可触发的加title提示（TODO16.3.1：取消删除线样式，仅提示）
                         if (!achievable && dayTrigger > 0) {
                             td.title = '超过' + (day + 1) + '天涨停限制，不可能触发';
                         }
