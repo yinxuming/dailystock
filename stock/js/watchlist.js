@@ -758,6 +758,16 @@ const Watchlist = (function () {
             const tr = document.createElement('tr');
             const g = row.gains;
 
+            // TODO21：批量操作复选框列
+            const tdCheck = document.createElement('td');
+            tdCheck.className = 'bt-check';
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.className = 'wl-row-check';
+            cb.dataset.code = row.code;
+            tdCheck.appendChild(cb);
+            tr.appendChild(tdCheck);
+
             // 辅助：创建单元格
             const addTd = (text, className = '') => {
                 const td = document.createElement('td');
@@ -945,6 +955,93 @@ const Watchlist = (function () {
     // ============================================================
 
     /**
+     * 初始化自选页批量操作工具栏（TODO21：复选框+全选+批量移除/加分组）
+     * 只在渲染完浏览表格后绑定一次，renderBrowseTable 重渲染后需重新绑定行复选框事件
+     */
+    function initBatchSelect() {
+        const batchBar = document.getElementById('wlBatchBar');
+        const checkAll = document.getElementById('wlCheckAll');
+        const countEl = batchBar?.querySelector('[data-wl-sel-count]');
+        const groupBtn = batchBar?.querySelector('[data-wl-batch-group]');
+        const removeBtn = batchBar?.querySelector('[data-wl-batch-remove]');
+        const clearBtn = batchBar?.querySelector('[data-wl-batch-clear]');
+        if (!batchBar || !checkAll) return;
+
+        // 全选框点击不触发表头排序（initBrowseTableSort监听th click）
+        checkAll.addEventListener('click', e => e.stopPropagation());
+
+        /**
+         * 刷新批量工具栏：勾选数、全选框状态、工具栏显隐
+         */
+        const refreshBatchBar = () => {
+            const checks = Array.from(document.querySelectorAll('.wl-row-check'));
+            const checked = checks.filter(c => c.checked);
+            if (countEl) countEl.textContent = checked.length;
+            checkAll.checked = checks.length > 0 && checked.length === checks.length;
+            if (clearBtn) clearBtn.style.display = checked.length > 0 ? '' : 'none';
+            batchBar.style.display = checked.length > 0 ? '' : 'none';
+        };
+
+        // 代理事件：行复选框 / 全选框变化
+        document.getElementById('wlBrowseTableBody').addEventListener('change', e => {
+            if (e.target.classList.contains('wl-row-check')) {
+                refreshBatchBar();
+            }
+        });
+        checkAll.addEventListener('change', () => {
+            document.querySelectorAll('.wl-row-check').forEach(c => { c.checked = checkAll.checked; });
+            refreshBatchBar();
+        });
+
+        // 批量加分组
+        if (groupBtn) groupBtn.addEventListener('click', () => {
+            const selected = getCheckedStocks();
+            if (!selected.length) return;
+            if (typeof WlGroup !== 'undefined' && WlGroup.openAddToGroupModal) {
+                WlGroup.openAddToGroupModal(selected, { onDone: () => refreshCurrentView(false) });
+            }
+        });
+
+        // 批量移除
+        if (removeBtn) removeBtn.addEventListener('click', () => {
+            const selected = getCheckedStocks();
+            if (!selected.length) return;
+            const names = selected.slice(0, 3).map(s => s.name).join('、') + (selected.length > 3 ? '等' : '');
+            if (!confirm(`确定从自选中移除 ${selected.length} 只股票？（${names}）`)) return;
+            selected.forEach(s => removeStock(s.code));
+            refreshCurrentView(false);
+            refreshBatchBar();
+        });
+
+        // 取消选择
+        if (clearBtn) clearBtn.addEventListener('click', () => {
+            document.querySelectorAll('.wl-row-check').forEach(c => { c.checked = false; });
+            refreshBatchBar();
+        });
+
+        // 每次渲染浏览表后重置工具栏（initBatchSelect 已绑在 tbody 上，只需重置状态）
+        if (!window.__wlBatchBound) {
+            window.__wlBatchBound = true;
+            // 监听 browseRows 变更：使用 MutationObserver 在 tbody 内容变化时重置
+            const mo = new MutationObserver(() => refreshBatchBar());
+            mo.observe(document.getElementById('wlBrowseTableBody'), { childList: true, subtree: true });
+        }
+    }
+
+    /**
+     * 获取当前勾选的股票列表（供批量操作使用）
+     * @returns {Array<{code,name,market,groupId}>}
+     */
+    function getCheckedStocks() {
+        const checked = Array.from(document.querySelectorAll('.wl-row-check:checked'));
+        const list = getList();
+        return checked.map(cb => {
+            const s = list.find(x => x.code === cb.dataset.code);
+            return s ? { code: s.code, name: s.name, market: s.market, groupId: s.groupId || '' } : null;
+        }).filter(Boolean);
+    }
+
+    /**
      * 绑定自选页事件
      */
     function bindEvents() {
@@ -975,8 +1072,11 @@ const Watchlist = (function () {
         // 搜索
         initSearch();
 
-        // 浏览视图表头排序（28列）
+        // 浏览视图表头排序（28列 + 复选框列不排序）
         initBrowseTableSort();
+
+        // TODO21：批量操作工具栏
+        initBatchSelect();
     }
 
     /**

@@ -2113,7 +2113,7 @@ const FupanRenderer = (function () {
                 <td>${stockLink(s.code, s.name)}</td>
                 <td class="col-code">${esc(s.code)}</td>
                 <td class="fp-score-total ${scoreClass(s.score)}">${s.score ?? '--'}</td>
-                <td>${s.probability !== null && s.probability !== undefined ? (s.probability * 100).toFixed(1) + '%' : '--'}</td>
+                <td data-v="${s.probability !== null && s.probability !== undefined ? (s.probability * 100).toFixed(1) : ''}">${s.probability !== null && s.probability !== undefined ? (s.probability * 100).toFixed(1) + '%' : '--'}</td>
                 <td data-v="${lhbByCode.has(s.code) && lhbByCode.get(s.code).onList ? (lhbByCode.get(s.code).netBuy || 0) : ''}">${lhbCell(lhbByCode.get(s.code))}</td>
                 <td>${s.veto ? `<span class="fp-veto-badge" title="${esc(s.veto)}">否决</span>` : '<span class="fp-pass-badge">通过</span>'}</td>
             </tr>`).join('');

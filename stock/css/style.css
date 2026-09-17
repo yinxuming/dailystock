@@ -2778,3 +2778,37 @@ tr.fp-cat-selected td.fp-cat-name {
 .wl-toast.wl-toast-success { border-color: rgba(34, 197, 94, 0.6); }
 .wl-toast.wl-toast-error   { border-color: rgba(239, 68, 68, 0.6); }
 .wl-toast.wl-toast-info    { border-color: rgba(59, 130, 246, 0.6); }
+
+/* ===== 自选批量操作工具栏（TODO21：复选框批量移除/加分组） ===== */
+.wl-batch-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 6px 0;
+    padding: 6px 10px;
+    background: rgba(250, 204, 21, 0.12);
+    border: 1px solid rgba(250, 204, 21, 0.4);
+    border-radius: 6px;
+    font-size: 13px;
+    color: #fde68a;
+}
+.wl-batch-bar .wl-batch-count b {
+    color: #fbbf24;
+    font-weight: 700;
+    margin: 0 2px;
+}
+.bt-check {
+    width: 32px;
+    text-align: center;
+    padding: 0 4px !important;
+}
+.bt-check input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+    accent-color: #3b82f6;
+}
+#wlCheckAll {
+    cursor: pointer;
+    accent-color: #3b82f6;
+}

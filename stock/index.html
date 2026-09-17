@@ -163,6 +163,14 @@
                 <!-- 自选分组栏（TODO16.2：全部/各分组/未分组/管理，数量角标，WlGroup渲染） -->
                 <div id="wlGroupBar" class="wl-group-bar"></div>
 
+                <!-- 自选批量操作工具栏（TODO21：复选框批量移除/批量加自选分组，选中有数据才显示） -->
+                <div id="wlBatchBar" class="wl-batch-bar" style="display:none">
+                    <span class="wl-batch-count">已选 <b data-wl-sel-count>0</b> 只</span>
+                    <button class="btn btn-accent btn-sm" data-wl-batch-group>批量加分组</button>
+                    <button class="btn btn-danger btn-sm" data-wl-batch-remove>批量移除</button>
+                    <button class="btn btn-secondary btn-sm" data-wl-batch-clear>取消选择</button>
+                </div>
+
                 <!-- 普通浏览视图（唯一视图；列设置齿轮同市场行情页表头排序） -->
                 <div id="wlBrowseView">
                     <div id="wlBrowseLoading" class="loading" style="display:none;">
@@ -180,6 +188,7 @@
                             <table id="wlBrowseTable" class="stock-table browse-table">
                                 <thead>
                                     <tr>
+                                        <th class="bt-check"><input type="checkbox" id="wlCheckAll" title="全选/全不选"></th>
                                         <th class="bt-sticky-code" data-sort="code">代码</th>
                                         <th class="bt-sticky-name" data-sort="name">名称</th>
                                         <th data-sort="group">分组</th>
@@ -306,11 +315,11 @@
     <script src="js/tradingCalendar.js?v=11"></script>
     <script src="js/renderer.js?v=20"></script>
     <script src="js/wl_group.js?v=3"></script>
-    <script src="js/watchlist.js?v=5"></script>
+    <script src="js/watchlist.js?v=6"></script>
     <script src="js/fupan_data.js?v=1"></script>
     <script src="js/fupan_scoring.js?v=2"></script>
     <script src="js/fupan_charts.js?v=3"></script>
-    <script src="js/fupan_render.js?v=7"></script>
+    <script src="js/fupan_render.js?v=8"></script>
     <script src="js/fupan.js?v=4"></script>
     <script src="js/main.js?v=24"></script>
 </body>
