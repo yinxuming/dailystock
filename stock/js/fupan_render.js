@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 每日复盘渲染模块（FupanRenderer）
  *
  * 职责：四个子tab的DOM渲染（数据由FupanData提供，图表由FupanCharts提供）
@@ -165,7 +165,7 @@ const FupanRenderer = (function () {
             ? `<span class="fp-lhb-interp" title="${esc(lhb.reason || '')}">${esc(lhb.interp)}</span>` : '';
         const netTxt = `净买 ${FupanData.formatYi(net)}亿`;
         const netHtml = code
-            ? `<a class="${net >= 0 ? 'change-up' : 'change-down'}" target="_blank" rel="noopener" title="点击查看东财龙虎榜详情" href="https://data.eastmoney.com/stock/lhb,${esc(code)}.html">${netTxt}</a>`
+            ? `<a class="${net >= 0 ? 'change-up' : 'change-down'}" target="_blank" rel="noopener" title="点击查看东财龙虎榜详情" href="https://data.eastmoney.com/stock/lhb/${esc(code)}.html">${netTxt}</a>`
             : `<span class="${net >= 0 ? 'change-up' : 'change-down'}">${netTxt}</span>`;
         return `
                 <div class="fp-top5-lhb">
@@ -1726,7 +1726,7 @@ const FupanRenderer = (function () {
         const saved = FupanScoring.getSavedConfig();
         const base = saved ? FupanScoring.cloneConfig(saved) : FupanScoring.defaultConfig();
         // 缓存key含黑名单（TODO24.5：checkVeto重算时读黑名单，黑名单变化需重新调优）
-        const key = dateStr + '|' + JSON.stringify([base.weights, base.veto, base.advice, FupanScoring.getBlacklist()]);
+        const key = dateStr + '|' + JSON.stringify([base.weights, base.veto, base.advice, FupanScoring.getBlacklist(), FupanScoring.getWhitelist()]);
         if (schemeCache.key === key && schemeCache.result) return schemeCache.result;
 
         const result = { base, cycles: { d1: [], d3: [], d5: [] }, schemes: {} };
@@ -1789,7 +1789,7 @@ const FupanRenderer = (function () {
         const hasCustom = config && !FupanScoring.isDefaultConfig(config);
         const active = hasCustom && FupanScoring.isActiveFor(config, dateStr);
         // TODO24.5：黑名单席位非空时强制前端重算（黑名单净买入一票否决仅在重算中生效）
-        const blActive = FupanScoring.hasBlacklist();
+        const blActive = (FupanScoring.hasBlacklist() || FupanScoring.hasWhitelist());
 
         // 0. 配置状态条（已配置自定义阈值/黑名单时提示生效状态）
         let configBanner = '';
@@ -1991,7 +1991,7 @@ const FupanRenderer = (function () {
         const hasCustom = config && !FupanScoring.isDefaultConfig(config);
         const cfgActive = hasCustom && FupanScoring.isActiveFor(config, dateStr);
         let curHtml = '';
-        if (cfgActive || FupanScoring.hasBlacklist()) {
+        if (cfgActive || (FupanScoring.hasBlacklist() || FupanScoring.hasWhitelist())) {
             const cfg = cfgActive ? config : FupanScoring.defaultConfig();
             const curR = judge(FupanScoring.rescoreDay(day, cfg).top5);
             curHtml = ` · 当前方案 <b>${curR.filter(x => x.ok).length}/${curR.length}</b>`;
@@ -2085,7 +2085,7 @@ const FupanRenderer = (function () {
             // TODO24.5：黑名单席位非空时也走前端重算（黑名单净买入否决仅在重算中生效）；
             // 阈值未生效（早于生效日/未配置）时按默认参数重算，仅应用黑名单否决
             if (cfgActive) return FupanScoring.rescoreDay(day, saved);
-            if (FupanScoring.hasBlacklist()) return FupanScoring.rescoreDay(day, FupanScoring.defaultConfig());
+            if ((FupanScoring.hasBlacklist() || FupanScoring.hasWhitelist())) return FupanScoring.rescoreDay(day, FupanScoring.defaultConfig());
             return day.scores || {};
         }
         if (id === 'initial') return day.scores || {};
@@ -2183,7 +2183,7 @@ const FupanRenderer = (function () {
                 const saved = FupanScoring.getSavedConfig();
                 const cfgActive = saved && !FupanScoring.isDefaultConfig(saved)
                     && FupanScoring.isActiveFor(saved, dateStr);
-                return cfgActive || FupanScoring.hasBlacklist();
+                return cfgActive || (FupanScoring.hasBlacklist() || FupanScoring.hasWhitelist());
             })();
 
         // 1. 方案信息条
@@ -2362,7 +2362,7 @@ const FupanRenderer = (function () {
         const config = FupanScoring.getSavedConfig();
         const hasCustom = config && !FupanScoring.isDefaultConfig(config);
         const custom = hasCustom ? config
-            : (FupanScoring.hasBlacklist() ? FupanScoring.defaultConfig() : null);
+            : ((FupanScoring.hasBlacklist() || FupanScoring.hasWhitelist()) ? FupanScoring.defaultConfig() : null);
 
         const rows = [];
         for (const d of targets) {
@@ -2785,3 +2785,5 @@ const FupanRenderer = (function () {
         renderScore
     };
 })();
+
+

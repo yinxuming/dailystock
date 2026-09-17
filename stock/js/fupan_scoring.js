@@ -62,6 +62,10 @@ const FupanScoring = (function () {
     // 采集端Actions无法读取，故黑名单否决仅前端重算结果生效，采集端落盘评分不变）
     const BLACKLIST_KEY = 'fupan_lhb_blacklist';
 
+    // 龙虎榜白名单席位持久化key（TODO25.1：与黑名单对称，用户自定义格局席位，
+    // 净买入时在 lhb 维度内加分；默认已硬编码 QUALITY_SEAT_KEYWORDS）
+    const WHITELIST_KEY = 'fupan_lhb_whitelist';
+
     // 板类型强度分（默认板型权重12分制，与后端一致；
     // TODO24.1：换手板提分（筹码交换充分参与价值高），一字板轻微折价，连续一字板另行降分）
     const BOARD_TYPE_SCORE = { '一字板': 11, 'T字板': 10.5, '换手板': 10, '回封板': 5, '厂字板': 5 };
@@ -156,24 +160,71 @@ const FupanScoring = (function () {
      * @param {number|null} openCount 炸板次数
      * @returns {number}
      */
-    function rawSealQuality(sealR, firstSeal, openCount) {
-        // 首次封板时间分（越早越强）
+    /**
+     * 成交额相对评分（满分3，TODO25.3，与后端 _score_amount 对齐）
+     * 结合全市场成交额上下文评判个股成交额相对大小
+     * @param {number|null} amount 个股成交额（元）
+     * @param {number|null} marketTotalAmount 全市场成交额（元）
+     * @returns {number}
+     */
+    function rawAmount(amount, marketTotalAmount) {
+        if (!amount) return 1.5;
+        const yi = amount / 1e8;
+        const bigMarket = (marketTotalAmount || 0) >= 2e12;
+        if (bigMarket) {
+            if (yi >= 80) return 0;
+            if (yi <= 50) return 3;
+            if (yi <= 70) return 2;
+            return 1;
+        } else {
+            if (yi >= 20) return 0.5;
+            if (yi <= 10) return 3;
+            if (yi <= 15) return 2;
+            return 1;
+        }
+    }
+
+    /**
+     * 换手率评分（满分2，TODO25.3，与后端 _score_turnover 对齐）
+     * @param {number|null} turnover 换手率（%）
+     * @returns {number}
+     */
+    function rawTurnover(turnover) {
+        if (turnover === null || turnover === undefined || turnover === 0) return 1;
+        if (turnover >= 3 && turnover <= 8) return 2;
+        if ((turnover >= 1 && turnover < 3) || (turnover > 8 && turnover <= 15)) return 1.2;
+        return 0.3;
+    }
+
+    /**
+     * 封板质量原始分（满分18）
+     * TODO25.3：内部重新分配——封板时间11→7、封成比4→3，腾出5分新增成交额(3)+换手率(2)
+     * @param {number|null} sealR 封成比（封板资金/成交额）
+     * @param {string} firstSeal 首次封板时刻
+     * @param {number|null} openCount 炸板次数
+     * @param {number|null} [amount] 个股成交额（元，TODO25.3）
+     * @param {number|null} [marketTotalAmount] 全市场成交额（元，TODO25.3）
+     * @param {number|null} [turnover] 换手率（%，TODO25.3）
+     * @returns {number}
+     */
+    function rawSealQuality(sealR, firstSeal, openCount, amount, marketTotalAmount, turnover) {
+        // 首次封板时间分（越早越强，满分从11→7）
         const s = toSecs(firstSeal);
         let timeScore;
-        if (s === null) timeScore = 4.5;
-        else if (s <= 9 * 3600 + 25 * 60) timeScore = 11;        // 09:25 集合竞价封板
-        else if (s <= 10 * 3600) timeScore = 9;                  // 10:00 前
-        else if (s <= 11 * 3600 + 30 * 60) timeScore = 6.5;      // 上午
-        else if (s <= 14 * 3600) timeScore = 4.5;                // 午后
-        else timeScore = 1.5;                                    // 尾盘
+        if (s === null) timeScore = 3.5;
+        else if (s <= 9 * 3600 + 25 * 60) timeScore = 7;
+        else if (s <= 10 * 3600) timeScore = 6;
+        else if (s <= 11 * 3600 + 30 * 60) timeScore = 4;
+        else if (s <= 14 * 3600) timeScore = 2.5;
+        else timeScore = 0.5;
 
-        // 封成比分（封板资金/成交额）
+        // 封成比分（满分从4→3）
         let ratioScore;
-        if (sealR === null || sealR === undefined) ratioScore = 2;
-        else if (sealR >= 1) ratioScore = 4;
-        else if (sealR >= 0.5) ratioScore = 3.5;
-        else if (sealR >= 0.2) ratioScore = 2.5;
-        else ratioScore = 1;
+        if (sealR === null || sealR === undefined) ratioScore = 1.5;
+        else if (sealR >= 1) ratioScore = 3;
+        else if (sealR >= 0.5) ratioScore = 2.5;
+        else if (sealR >= 0.2) ratioScore = 1.8;
+        else ratioScore = 0.8;
 
         // 炸板次数分
         let openScore;
@@ -181,7 +232,10 @@ const FupanScoring = (function () {
         else if (openCount <= 2) openScore = 2;
         else openScore = 0;
 
-        return Math.round((timeScore + ratioScore + openScore) * 10) / 10;
+        const total = timeScore + ratioScore + openScore
+            + rawAmount(amount, marketTotalAmount)
+            + rawTurnover(turnover);
+        return Math.max(0.0, Math.min(18.0, Math.round(total * 10) / 10));
     }
 
     /**
@@ -231,6 +285,15 @@ const FupanScoring = (function () {
         ['紫阳东路', 2]   // 武汉紫阳东路：大资金轮动型，次日兑现风险中高
     ];
 
+    // 格局席位加分关键词（TODO25.1，与后端 QUALITY_SEAT_KEYWORDS 对齐）
+    // 买方净买入即加分，多项命中累计但封顶4.5；与砸盘减分对称
+    const QUALITY_SEAT_KEYWORDS = [
+        ['机构专用', 2],  // 机构席位：中长线资金，格局交易者
+        ['沪股通', 2],    // 北向资金：外资风格偏长持
+        ['深股通', 2],    // 北向资金同上
+        ['量化', 1.5]     // 量化打板但风格稳健的知名席位
+    ];
+
     /**
      * 龙虎榜资金质量原始分（满分15，TODO13.1，与后端 _score_lhb 逐条对齐）
      * 未上榜=9中性；上榜=基础7+净买强度+席位画像加减；
@@ -255,15 +318,34 @@ const FupanScoring = (function () {
         if ((style.patternNet || 0) > 0) score += 2;
         if ((style.retailBuyRatio || 0) >= 0.4) score -= 2;
         // TODO24.3：知名砸盘席位买入减分（多项命中取最大减分，避免过度惩罚）
+        // TODO25.1：格局席位净买入加分（硬编码 + 用户自定义白名单，封顶4.5）
         let dumpPenalty = 0;
+        let qualityBonus = 0;
+        const userWl = getWhitelist();
         (lhb.seats || []).forEach(seat => {
-            if (!seat || !seat.buy) return;
+            if (!seat) return;
             const nm = String(seat.name || '');
-            DUMP_SEAT_KEYWORDS.forEach(([kw, pen]) => {
-                if (nm.includes(kw) && pen > dumpPenalty) dumpPenalty = pen;
-            });
+            // 砸盘减分（出现在买方即减分，净买净卖都有兑现风险）
+            if (seat.buy) {
+                DUMP_SEAT_KEYWORDS.forEach(([kw, pen]) => {
+                    if (nm.includes(kw) && pen > dumpPenalty) dumpPenalty = pen;
+                });
+            }
+            // 格局加分（必须净买入才加分，净卖/0不加分）
+            const net = (seat.net !== undefined && seat.net !== null)
+                ? Number(seat.net) : ((Number(seat.buy) || 0) - (Number(seat.sell) || 0));
+            if (net > 0) {
+                QUALITY_SEAT_KEYWORDS.forEach(([kw, bonus]) => {
+                    if (nm.includes(kw)) qualityBonus += bonus;
+                });
+                // 用户自定义白名单席位净买入加分（每席+1.5，封顶在总封顶4.5内）
+                userWl.forEach(kw => {
+                    if (nm.includes(kw)) qualityBonus += 1.5;
+                });
+            }
         });
         score -= dumpPenalty;
+        score += Math.min(qualityBonus, 4.5);
         return Math.round(Math.max(0, Math.min(15, score)) * 10) / 10;
     }
 
@@ -399,7 +481,7 @@ const FupanScoring = (function () {
      * @param {boolean} [dragonSeed] 未来主线龙头候选（TODO24.4）
      * @returns {{total:number, dimensions:Object, veto:null|string, dragon:boolean}}
      */
-    function scoreStock(stock, sectorZtCount, sectorMaxLb, phase, recentZt, config, dragonSeed) {
+    function scoreStock(stock, sectorZtCount, sectorMaxLb, phase, recentZt, config, dragonSeed, marketTotalAmount) {
         const w = config.weights;
         // TODO24.4 接班龙头潜质身位分（低位但有下一轮主线潜质，身位分视同次高位）
         let posRaw = rawPosition(stock.lbCount, sectorMaxLb, sectorZtCount);
@@ -410,7 +492,8 @@ const FupanScoring = (function () {
             ztActivity: scaleDim('ztActivity', rawZtActivity(recentZt), w),
             sectorEffect: scaleDim('sectorEffect', rawSectorEffect(sectorZtCount), w),
             sealQuality: scaleDim('sealQuality',
-                rawSealQuality(stock.sealRatio, stock.firstSealTime, stock.openCount), w),
+                rawSealQuality(stock.sealRatio, stock.firstSealTime, stock.openCount,
+                    stock.amount, marketTotalAmount, stock.turnover), w),
             boardType: scaleDim('boardType', rawBoardType(stock.limitType, stock.lbCount), w),
             position: scaleDim('position', posRaw, w),
             sentiment: scaleDim('sentiment', rawSentiment(phase), w),
@@ -477,6 +560,8 @@ const FupanScoring = (function () {
             st.maxLB = Math.max(st.maxLB, s.lbCount || 0);
         });
 
+        // TODO25.3：成交额相对评分上下文（全市场成交额）
+        const marketTotalAmount = (day.market || {}).totalAmount;
         // TODO24.4 未来龙头判定上下文：昨日最高板（落盘scores.prevMaxLB，旧数据无=0不判定）+ 今日最高板
         const prevMaxLb = Number((((day.scores || {}).prevMaxLB)) || 0);
         let todayMaxLb = 0;
@@ -486,7 +571,7 @@ const FupanScoring = (function () {
             const st = sectorStats[s.industry || '其他'] || { count: 1, maxLB: 1 };
             const dragon = isDragonSeed(s, st.count, prevMaxLb, todayMaxLb);
             const sc = scoreStock(s, st.count, st.maxLB, phase,
-                s.recentZt === undefined ? null : s.recentZt, config, dragon);
+                s.recentZt === undefined ? null : s.recentZt, config, dragon, marketTotalAmount);
             // 晋级概率：从落盘（概率-评分）反推该股历史基线，仅评分调整项随新评分变化；
             // TODO24.2：一票否决股概率直接归0（与后端 compute_probability veto 分支一致）
             const stored = storedByCode.get(s.code) || {};
@@ -576,6 +661,33 @@ const FupanScoring = (function () {
     /** 黑名单是否非空（非空时评分需前端重算使黑名单否决生效） */
     function hasBlacklist() {
         return getBlacklist().length > 0;
+    }
+
+    /**
+     * 读取龙虎榜白名单席位列表（TODO25.1，与黑名单对称）
+     * @returns {Array<string>} 席位名/关键词数组（未配置返回空数组）
+     */
+    function getWhitelist() {
+        const v = FupanData.getSetting(WHITELIST_KEY, []);
+        return Array.isArray(v) ? v.map(s => String(s || '').trim()).filter(Boolean) : [];
+    }
+
+    /**
+     * 保存龙虎榜白名单席位列表（去空格、去重保序后持久化）
+     * @param {Array<string>} list 席位名/关键词数组
+     */
+    function saveWhitelist(list) {
+        const cleaned = [];
+        (list || []).forEach(s => {
+            const v = String(s || '').trim();
+            if (v && cleaned.indexOf(v) < 0) cleaned.push(v);
+        });
+        FupanData.setSetting(WHITELIST_KEY, cleaned);
+    }
+
+    /** 白名单是否非空（非空时评分需前端重算使白名单加分生效） */
+    function hasWhitelist() {
+        return getWhitelist().length > 0;
     }
 
     /**
@@ -811,6 +923,10 @@ const FupanScoring = (function () {
         // 龙虎榜黑名单席位（TODO24.5）
         getBlacklist,
         saveBlacklist,
-        hasBlacklist
+        hasBlacklist,
+        // 龙虎榜白名单席位（TODO25.1）
+        getWhitelist,
+        saveWhitelist,
+        hasWhitelist
     };
 })();
