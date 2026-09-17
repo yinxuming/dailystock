@@ -114,42 +114,63 @@ const FupanRenderer = (function () {
 
     // ===== 龙虎榜展示（TODO13.1） =====
 
+    // 砸盘席位关键词（TODO24.3席位特征标签展示用；评分减分逻辑在FupanScoring.DUMP_SEAT_KEYWORDS）
+    const DUMP_SEAT_HINT = ['上塘路', '国新北京', '佛山', '紫阳东路'];
+
     /**
      * 涨停池表格龙虎榜列单元格（净买额亿元，红涨绿跌，未上榜显示--）
+     * TODO24.3：净买额加超链接跳转东财个股龙虎榜详情页
      * @param {Object|null} lhb 涨停股lhb字段
+     * @param {string} [code] 股票代码（生成东财龙虎榜页链接）
      * @returns {string} td内容HTML
      */
-    function lhbCell(lhb) {
+    function lhbCell(lhb, code) {
         if (!lhb || !lhb.onList) return '<span class="fp-lhb-off">--</span>';
         const net = lhb.netBuy || 0;
-        return `<span class="${net >= 0 ? 'change-up' : 'change-down'}" `
-            + `title="净买额占总成交比 ${(lhb.netBuyRatio ?? 0).toFixed(2)}%">`
-            + `${net >= 0 ? '+' : ''}${FupanData.formatYi(net)}</span>`;
+        const txt = `${net >= 0 ? '+' : ''}${FupanData.formatYi(net)}`;
+        const cls = net >= 0 ? 'change-up' : 'change-down';
+        const title = `净买额占总成交比 ${(lhb.netBuyRatio ?? 0).toFixed(2)}%，点击查看东财龙虎榜详情`;
+        if (code) {
+            return `<a class="${cls}" title="${title}" target="_blank" rel="noopener" `
+                + `href="https://data.eastmoney.com/stock/lhb,${esc(code)}.html">${txt}</a>`;
+        }
+        return `<span class="${cls}" title="净买额占总成交比 ${(lhb.netBuyRatio ?? 0).toFixed(2)}%">${txt}</span>`;
     }
 
     /**
      * Top5卡片龙虎榜信息行（净买+占成交比+席位画像标签+东财解读）
+     * TODO24.3：净买金额加超链接跳转东财个股龙虎榜详情页
      * @param {Object|null} lhb 涨停股lhb字段
+     * @param {string} [code] 股票代码（生成东财龙虎榜页链接）
      * @returns {string} 信息行HTML（未上榜返回空串）
      */
-    function top5LhbHtml(lhb) {
+    function top5LhbHtml(lhb, code) {
         if (!lhb || !lhb.onList) return '';
         const net = lhb.netBuy || 0;
         const st = lhb.style || {};
-        // 席位画像标签（评分加减依据可视化）
+        // 席位画像标签（评分加减依据可视化；TODO24.3砸盘席位标签）
         const tags = [];
         if ((st.instNet || 0) > 0) tags.push('机构净买');
         if ((st.instNet || 0) < 0) tags.push('机构净卖');
         if ((st.patternNet || 0) > 0) tags.push('格局席位');
         if ((st.retailBuyRatio || 0) >= 0.4) tags.push('散户接盘');
+        (lhb.seats || []).forEach(seat => {
+            if (seat && seat.buy && DUMP_SEAT_HINT.some(hint => String(seat.name || '').includes(hint))) {
+                tags.push('砸盘席位买入');
+            }
+        });
         const tagHtml = tags.length
             ? `<span class="fp-lhb-style">${tags.join(' · ')}</span>` : '';
         const interp = lhb.interp
             ? `<span class="fp-lhb-interp" title="${esc(lhb.reason || '')}">${esc(lhb.interp)}</span>` : '';
+        const netTxt = `净买 ${FupanData.formatYi(net)}亿`;
+        const netHtml = code
+            ? `<a class="${net >= 0 ? 'change-up' : 'change-down'}" target="_blank" rel="noopener" title="点击查看东财龙虎榜详情" href="https://data.eastmoney.com/stock/lhb,${esc(code)}.html">${netTxt}</a>`
+            : `<span class="${net >= 0 ? 'change-up' : 'change-down'}">${netTxt}</span>`;
         return `
                 <div class="fp-top5-lhb">
                     <span class="fp-lhb-badge">龙虎榜</span>
-                    <span class="${net >= 0 ? 'change-up' : 'change-down'}">净买 ${FupanData.formatYi(net)}亿</span>
+                    ${netHtml}
                     <span class="fp-lhb-ratio">占成交 ${(lhb.netBuyRatio ?? 0).toFixed(1)}%</span>
                     ${tagHtml}${interp}
                 </div>`;
@@ -841,7 +862,7 @@ const FupanRenderer = (function () {
                 <div data-fp-ladder-body>${ladderBodyHtml(day, prevDay)}</div>
             </div>`;
 
-        // 4. 最高板模式周期表（TODO14：仅最高板跟踪，甘特式 周期表）
+        // 4. 最高板模式周期表（TODO14：最高板跟踪甘特式周期表；TODO23：向下深度可显示次高板等）
         const maxBoardHtml = `
             <div class="fp-mb-toolbar" data-fp-mb-toolbar>
                 <span class="fp-mb-range" data-fp-mb-range><span class="fp-empty">周期表计算中...</span></span>
@@ -851,6 +872,15 @@ const FupanRenderer = (function () {
                         <option value="10">近10日</option>
                         <option value="22">近22日</option>
                         <option value="40">近40日</option>
+                    </select>
+                </label>
+                <label class="fp-mb-period">
+                    向下深度
+                    <select data-fp-mb-depth>
+                        <option value="0">0（仅最高板）</option>
+                        <option value="1">1（含次高板）</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
                     </select>
                 </label>
             </div>
@@ -1142,7 +1172,7 @@ const FupanRenderer = (function () {
                 <td>${esc(s.stats || '--')}</td>
                 <td>${typeBadge(s.limitType)}</td>
                 <td data-v="${s.lhb && s.lhb.onList ? (s.lhb.netBuy || 0) : ''}"
-                    title="${s.lhb && s.lhb.onList ? esc(s.lhb.interp || s.lhb.reason || '') : ''}">${lhbCell(s.lhb)}</td>
+                    title="${s.lhb && s.lhb.onList ? esc(s.lhb.interp || s.lhb.reason || '') : ''}">${lhbCell(s.lhb, s.code)}</td>
                 <td class="fp-industry" title="${esc(s.industry || '')}">${esc(s.industry || '--')}</td>
             </tr>`).join('');
         return `
@@ -1416,6 +1446,8 @@ const FupanRenderer = (function () {
 
     // 统计区间持久化key（近10/22/40个交易日，默认22对齐参考图"22个交易日"口径）
     const MAXBOARD_DAYS_KEY = 'fupan_maxboard_days';
+    // 向下显示深度持久化key（TODO23：0=仅最高板（现状），1=同时显示次高板（默认），以此类推）
+    const MAXBOARD_DEPTH_KEY = 'fupan_maxboard_depth';
     // renderMaxBoardCycle异步渲染令牌（日期/区间切换时丢弃过期DOM更新，防错乱）
     let maxBoardToken = 0;
     // 被跟踪股票配色（柔和底色+同色描边，同一股票整个周期同色形成阶梯视觉；金色留给最高板高亮）
@@ -1447,12 +1479,15 @@ const FupanRenderer = (function () {
      * 主流程：取统计区间（近N个交易日）逐日数据 → 每日涨停池最高板个股=被跟踪股票
      *        → 向前回补日期（区间首日个股可能已连板，保证首板诞生可见）
      *        → 被跟踪股票在窗口内全部出现落格（首板→断板整个周期，多周期自然分段）
-     * 口径：只统计最高板（剔除ST，反包个股连板数天然重新计数），参考图脚注
+     * 口径：跟踪最高板及向下depth板（剔除ST，反包个股连板数天然重新计数）；
+     *      depth=0即仅最高板（TODO14原口径），参考图脚注
      * @param {string} dateStr 当前交易日 YYYY-MM-DD（区间截止日）
      * @param {number} periodLen 统计区间交易日数
-     * @returns {Promise<Object|null>} {days,rows,cells,dayMax,maxCol,tracked}；无数据返回null
+     * @param {number} [depth=0] 向下显示深度（0=仅最高板，1=同时跟踪次高板，以此类推；TODO23）
+     * @returns {Promise<Object|null>} {days,rows,cells,dayMax,maxCol,tracked,depth}；无数据返回null
      */
-    async function buildMaxBoardData(dateStr, periodLen) {
+    async function buildMaxBoardData(dateStr, periodLen, depth) {
+        if (depth === null || depth === undefined || isNaN(depth)) depth = 0;
         const dates = await FupanData.getAvailableDates();
         const endIdx = dates.indexOf(dateStr);
         if (endIdx < 0) return null;
@@ -1466,7 +1501,8 @@ const FupanRenderer = (function () {
         }
         if (!days.size) return null;
 
-        // 2. 逐日最高板与被跟踪股票（当日最高板可并列多只，全部跟踪）
+        // 2. 逐日最高板与被跟踪股票（当日最高板可并列多只，全部跟踪；
+        //    TODO23：向下深度depth，连板数>=当日最高板-depth的股票均被跟踪，0=仅最高板）
         const isST = s => /ST/i.test(String(s.name || ''));
         const dayMax = new Map();
         const trackedRaw = new Map();   // code -> {code,name,firstDate}
@@ -1478,7 +1514,7 @@ const FupanRenderer = (function () {
             pool.forEach(s => { const lb = s.lbCount || 1; if (lb > mx) mx = lb; });
             dayMax.set(dt, mx);
             pool.forEach(s => {
-                if (mx > 0 && (s.lbCount || 1) === mx && !trackedRaw.has(s.code)) {
+                if (mx > 0 && (s.lbCount || 1) >= mx - depth && !trackedRaw.has(s.code)) {
                     trackedRaw.set(s.code, { code: s.code, name: s.name, firstDate: dt });
                 }
             });
@@ -1523,7 +1559,7 @@ const FupanRenderer = (function () {
                 : a.name.localeCompare(b.name, 'zh-CN'));
         tracked.forEach((t, i) => { t.colorIdx = i; });
 
-        return { days, rows, cells, dayMax, maxCol, tracked };
+        return { days, rows, cells, dayMax, maxCol, tracked, depth };
     }
 
     /**
@@ -1591,6 +1627,10 @@ const FupanRenderer = (function () {
             </tr>`;
         }).join('');
 
+        const depth = data.depth || 0;
+        const trackNote = depth > 0
+            ? `跟踪各交易日最高板及向下${depth}板（次高板等）个股（剔除ST，反包连板数重新计数）`
+            : '仅跟踪各交易日最高板个股（剔除ST，反包连板数重新计数）';
         return `
             <div class="table-wrapper fp-mb-wrap">
                 <table class="stock-table fp-mb-table" data-no-sort="1">
@@ -1603,11 +1643,12 @@ const FupanRenderer = (function () {
                     <tbody>${trs}</tbody>
                 </table>
             </div>
-            <p class="fp-mb-note">仅跟踪各交易日最高板个股（剔除ST，反包连板数重新计数）；同色徽标为同一股票的完整连板周期（首板→断板）；金框=当日最高板；2板以上格内小字为当日该板级晋级率。</p>`;
+            <p class="fp-mb-note">${trackNote}；同色徽标为同一股票的完整连板周期（首板→断板）；金框=当日最高板；2板以上格内小字为当日该板级晋级率。</p>`;
     }
 
     /**
      * 渲染最高板模式周期表（TODO14）：区间选择（持久化）+ 区间摘要 + 甘特式表格
+     * TODO23：新增向下深度选择（持久化，默认1=同时显示次高板，0=仅最高板）
      * @param {HTMLElement} container 涨跌停tab容器
      * @param {string} dateStr 当前交易日 YYYY-MM-DD
      */
@@ -1616,10 +1657,12 @@ const FupanRenderer = (function () {
         const body = container.querySelector('[data-fp-mb-body]');
         const rangeEl = container.querySelector('[data-fp-mb-range]');
         const sel = container.querySelector('[data-fp-mb-days]');
+        const depthSel = container.querySelector('[data-fp-mb-depth]');
         if (!body) return;
 
-        // 区间选择（onchange属性赋值避免重渲染时重复绑定）
+        // 区间/深度选择（onchange属性赋值避免重渲染时重复绑定）
         const periodLen = Number(FupanData.getSetting(MAXBOARD_DAYS_KEY, 22)) || 22;
+        const depth = Math.max(0, Number(FupanData.getSetting(MAXBOARD_DEPTH_KEY, 1)) || 0);
         if (sel) {
             sel.value = String(periodLen);
             sel.onchange = () => {
@@ -1627,8 +1670,15 @@ const FupanRenderer = (function () {
                 renderMaxBoardCycle(container, dateStr).catch(() => { });
             };
         }
+        if (depthSel) {
+            depthSel.value = String(depth);
+            depthSel.onchange = () => {
+                FupanData.setSetting(MAXBOARD_DEPTH_KEY, Number(depthSel.value));
+                renderMaxBoardCycle(container, dateStr).catch(() => { });
+            };
+        }
 
-        const data = await buildMaxBoardData(dateStr, periodLen);
+        const data = await buildMaxBoardData(dateStr, periodLen, depth);
         if (token !== maxBoardToken) return;   // 过期渲染丢弃
         if (!data) {
             if (rangeEl) rangeEl.innerHTML = '<span class="fp-empty">区间内无涨停数据</span>';
@@ -1636,13 +1686,14 @@ const FupanRenderer = (function () {
             return;
         }
 
-        // 区间摘要：M.D–M.D 连板高度 · N个交易日 · 当前高度X板·个股名
+        // 区间摘要：M.D–M.D 连板高度 · N个交易日 · 当前高度X板·个股名（深度>0时附深度提示）
         const first = data.rows[data.rows.length - 1];
         const curMax = data.dayMax.get(dateStr) || 0;
         const curStocks = data.cells.has(dateStr) && data.cells.get(dateStr).has(curMax)
             ? data.cells.get(dateStr).get(curMax).map(s => s.name).join('、') : '';
         if (rangeEl) {
             rangeEl.innerHTML = `${mbDateLabel(first).split(' ')[0]}–${mbDateLabel(dateStr)} 连板高度 · ${data.rows.length}个交易日`
+                + (depth > 0 ? ` · 深度${depth}` : '')
                 + (curMax ? ` · 高度${curMax}板${curStocks ? '·' + esc(curStocks) : ''}` : '');
         }
         body.innerHTML = mbTableHtml(data);
@@ -1674,7 +1725,8 @@ const FupanRenderer = (function () {
     async function buildSchemes(dateStr) {
         const saved = FupanScoring.getSavedConfig();
         const base = saved ? FupanScoring.cloneConfig(saved) : FupanScoring.defaultConfig();
-        const key = dateStr + '|' + JSON.stringify([base.weights, base.veto, base.advice]);
+        // 缓存key含黑名单（TODO24.5：checkVeto重算时读黑名单，黑名单变化需重新调优）
+        const key = dateStr + '|' + JSON.stringify([base.weights, base.veto, base.advice, FupanScoring.getBlacklist()]);
         if (schemeCache.key === key && schemeCache.result) return schemeCache.result;
 
         const result = { base, cycles: { d1: [], d3: [], d5: [] }, schemes: {} };
@@ -1736,24 +1788,35 @@ const FupanRenderer = (function () {
         const config = FupanScoring.getSavedConfig();
         const hasCustom = config && !FupanScoring.isDefaultConfig(config);
         const active = hasCustom && FupanScoring.isActiveFor(config, dateStr);
+        // TODO24.5：黑名单席位非空时强制前端重算（黑名单净买入一票否决仅在重算中生效）
+        const blActive = FupanScoring.hasBlacklist();
 
-        // 0. 配置状态条（已配置自定义阈值时提示生效状态）
+        // 0. 配置状态条（已配置自定义阈值/黑名单时提示生效状态）
         let configBanner = '';
-        if (hasCustom) {
-            configBanner = active
-                ? `<div class="fp-config-banner">自定义阈值生效中（生效于 ${esc(config.effectiveDate)}，本页评分为前端按自定义阈值重算）</div>`
-                : `<div class="fp-config-banner fp-config-muted">已配置自定义阈值（生效于 ${esc(config.effectiveDate)}），本日早于生效日，展示采集端原始评分</div>`;
+        const blTxt = blActive ? `黑名单席位生效中（${FupanScoring.getBlacklist().length}个席位净买入的股票一票否决）` : '';
+        if (active && blActive) {
+            configBanner = `<div class="fp-config-banner">自定义阈值生效中（生效于 ${esc(config.effectiveDate)}，本页评分为前端按自定义阈值重算）；${blTxt}</div>`;
+        } else if (active) {
+            configBanner = `<div class="fp-config-banner">自定义阈值生效中（生效于 ${esc(config.effectiveDate)}，本页评分为前端按自定义阈值重算）</div>`;
+        } else if (hasCustom && blActive) {
+            configBanner = `<div class="fp-config-banner fp-config-muted">已配置自定义阈值（生效于 ${esc(config.effectiveDate)}），本日早于生效日，阈值不参与本页重算；${blTxt}</div>`;
+        } else if (hasCustom) {
+            configBanner = `<div class="fp-config-banner fp-config-muted">已配置自定义阈值（生效于 ${esc(config.effectiveDate)}），本日早于生效日，展示采集端原始评分</div>`;
+        } else if (blActive) {
+            configBanner = `<div class="fp-config-banner">${blTxt}，本页评分为前端重算</div>`;
         }
 
         container.innerHTML = `
             ${configBanner}
             <div class="fp-score-toolbar">
                 <button class="fp-cfg-toggle" data-fp-cfg-toggle title="微调当前方案参数（维度权重/一票否决/建议分级）">⚙ 阈值设置</button>
+                <button class="fp-cfg-toggle" data-fp-blacklist-btn title="配置龙虎榜黑名单席位：黑名单席位净买入的股票评分一票否决">🚫 黑名单席位</button>
                 <button class="fp-cfg-toggle" data-fp-export title="当前方案参数导出为JSON备份文件到本地">💾 备份导出</button>
                 <button class="fp-cfg-toggle" data-fp-import-btn title="从本地JSON备份文件导入方案参数">📂 导入备份</button>
                 <input type="file" accept=".json,application/json" data-fp-import-file style="display:none">
             </div>
             <div data-fp-cfg-panel style="display:none"></div>
+            <div data-fp-blacklist-panel style="display:none"></div>
             ${section('预测回溯（模型方案）', `
                 <div data-fp-acc-line><div class="fp-empty">本日预测准确率计算中...</div></div>
                 <div data-fp-scheme-tabs></div>
@@ -1768,6 +1831,11 @@ const FupanRenderer = (function () {
         const panel = container.querySelector('[data-fp-cfg-panel]');
         if (FupanData.getSetting('fupan_score_cfg_open', false)) panel.style.display = '';
         await renderCfgPanel(panel, container, day, dateStr);
+
+        // 黑名单席位管理面板（TODO24.5，展开状态持久化）
+        const blPanel = container.querySelector('[data-fp-blacklist-panel]');
+        if (FupanData.getSetting('fupan_score_bl_open', false)) blPanel.style.display = '';
+        renderBlacklistPanel(blPanel, container, day, dateStr);
 
         // 异步1：本日预测准确率（T+1结果已出时显示当时评分的准确率，TODO13.2.1）
         renderDayAccuracy(container.querySelector('[data-fp-acc-line]'), day, dateStr)
@@ -1807,6 +1875,17 @@ const FupanRenderer = (function () {
             const show = panel.style.display === 'none';
             panel.style.display = show ? '' : 'none';
             FupanData.setSetting('fupan_score_cfg_open', show);
+        });
+        // 黑名单席位面板开关（TODO24.5；展开时收起阈值面板避免叠加）
+        const blPanel = container.querySelector('[data-fp-blacklist-panel]');
+        container.querySelector('[data-fp-blacklist-btn]').addEventListener('click', () => {
+            const show = blPanel.style.display === 'none';
+            blPanel.style.display = show ? '' : 'none';
+            if (show) {
+                panel.style.display = 'none';
+                FupanData.setSetting('fupan_score_cfg_open', false);
+            }
+            FupanData.setSetting('fupan_score_bl_open', show);
         });
         container.querySelector('[data-fp-export]').addEventListener('click', exportSchemeBackup);
         const fileInput = container.querySelector('[data-fp-import-file]');
@@ -1906,12 +1985,15 @@ const FupanRenderer = (function () {
         const hits = storedR.filter(x => x.ok).length;
         const chips = storedR.map(x =>
             `<span class="fp-bt-stock ${x.ok ? 'fp-bt-ok' : 'fp-bt-miss'}" title="${esc(x.name)}：${x.ok ? '次日晋级' : '次日未晋级'}">${esc(x.name)}${x.ok ? '✓' : '✗'}</span>`).join('');
-        // 自定义阈值生效时，附当前方案重算Top5的准确率对比
+        // 自定义阈值/黑名单生效时，附当前方案重算Top5的准确率对比
+        // （TODO24.5：黑名单非空但阈值未生效时按默认参数重算，仅应用黑名单否决）
         const config = FupanScoring.getSavedConfig();
         const hasCustom = config && !FupanScoring.isDefaultConfig(config);
+        const cfgActive = hasCustom && FupanScoring.isActiveFor(config, dateStr);
         let curHtml = '';
-        if (hasCustom && FupanScoring.isActiveFor(config, dateStr)) {
-            const curR = judge(FupanScoring.rescoreDay(day, config).top5);
+        if (cfgActive || FupanScoring.hasBlacklist()) {
+            const cfg = cfgActive ? config : FupanScoring.defaultConfig();
+            const curR = judge(FupanScoring.rescoreDay(day, cfg).top5);
             curHtml = ` · 当前方案 <b>${curR.filter(x => x.ok).length}/${curR.length}</b>`;
         }
         box.innerHTML = `
@@ -1999,9 +2081,11 @@ const FupanRenderer = (function () {
         if (id === 'current') {
             const saved = FupanScoring.getSavedConfig();
             const hasCustom = saved && !FupanScoring.isDefaultConfig(saved);
-            if (hasCustom && FupanScoring.isActiveFor(saved, dateStr)) {
-                return FupanScoring.rescoreDay(day, saved);
-            }
+            const cfgActive = hasCustom && FupanScoring.isActiveFor(saved, dateStr);
+            // TODO24.5：黑名单席位非空时也走前端重算（黑名单净买入否决仅在重算中生效）；
+            // 阈值未生效（早于生效日/未配置）时按默认参数重算，仅应用黑名单否决
+            if (cfgActive) return FupanScoring.rescoreDay(day, saved);
+            if (FupanScoring.hasBlacklist()) return FupanScoring.rescoreDay(day, FupanScoring.defaultConfig());
             return day.scores || {};
         }
         if (id === 'initial') return day.scores || {};
@@ -2025,12 +2109,16 @@ const FupanRenderer = (function () {
         if (id === 'current') {
             const saved = FupanScoring.getSavedConfig();
             const isDefault = !saved || FupanScoring.isDefaultConfig(saved);
+            const blN = FupanScoring.getBlacklist().length;
             const eqY = S.ybest && FupanScoring.configsEqual(S.current.config, S.ybest.config);
+            // 副标题：默认/自定义参数 + 黑名单状态（TODO24.5）
+            const sub = (isDefault ? '默认参数（未自定义）' : '自定义参数，生效于 ' + esc(saved.effectiveDate))
+                + (blN ? `；黑名单席位${blN}个生效中` : '');
             return `
                 <div class="fp-scheme-info">
                     <div class="fp-scheme-desc">
                         <b>当前方案</b>${eqY ? '<span class="fp-scheme-eq">= 昨日最准</span>' : ''}
-                        <span class="fp-scheme-sub">${isDefault ? '默认参数（未自定义）' : '自定义参数，生效于 ' + esc(saved.effectiveDate)}</span>
+                        <span class="fp-scheme-sub">${sub}</span>
                         <span class="fp-scheme-acc">回测命中：${accRow(S.current)}</span>
                     </div>
                     <div class="fp-scheme-actions">
@@ -2089,10 +2177,13 @@ const FupanRenderer = (function () {
         const scores = scoresForScheme(id, schemes, day, dateStr);
         const top5 = scores.top5 || [];
         const weights = scores.weights || {};
+        // 当前方案视图是否为前端重算（自定义阈值生效 或 黑名单非空，TODO24.5）
         const isCustomView = id === 'current'
             && (() => {
                 const saved = FupanScoring.getSavedConfig();
-                return saved && !FupanScoring.isDefaultConfig(saved) && FupanScoring.isActiveFor(saved, dateStr);
+                const cfgActive = saved && !FupanScoring.isDefaultConfig(saved)
+                    && FupanScoring.isActiveFor(saved, dateStr);
+                return cfgActive || FupanScoring.hasBlacklist();
             })();
 
         // 1. 方案信息条
@@ -2110,11 +2201,11 @@ const FupanRenderer = (function () {
         const allScores = scores.all || [];
         const allRows = allScores.map(s => `
             <tr>
-                <td>${stockLink(s.code, s.name)}</td>
+                <td>${stockLink(s.code, s.name)}${s.dragon ? ' <span class="fp-dragon-badge" title="高位断板日的1~3板接班候选（板块身位分已加成）">未来龙头</span>' : ''}</td>
                 <td class="col-code">${esc(s.code)}</td>
                 <td class="fp-score-total ${scoreClass(s.score)}">${s.score ?? '--'}</td>
                 <td data-v="${s.probability !== null && s.probability !== undefined ? (s.probability * 100).toFixed(1) : ''}">${s.probability !== null && s.probability !== undefined ? (s.probability * 100).toFixed(1) + '%' : '--'}</td>
-                <td data-v="${lhbByCode.has(s.code) && lhbByCode.get(s.code).onList ? (lhbByCode.get(s.code).netBuy || 0) : ''}">${lhbCell(lhbByCode.get(s.code))}</td>
+                <td data-v="${lhbByCode.has(s.code) && lhbByCode.get(s.code).onList ? (lhbByCode.get(s.code).netBuy || 0) : ''}">${lhbCell(lhbByCode.get(s.code), s.code)}</td>
                 <td>${s.veto ? `<span class="fp-veto-badge" title="${esc(s.veto)}">否决</span>` : '<span class="fp-pass-badge">通过</span>'}</td>
             </tr>`).join('');
         const allTable = allRows ? `
@@ -2150,8 +2241,10 @@ const FupanRenderer = (function () {
                         <li>评分为收盘后基于当日涨停数据+龙虎榜的静态计算，供次日竞价参考</li>
                         <li>涨停活跃度：近40自然日涨停次数越多得分越高（资金记忆）</li>
                         <li>封板质量：封成比、首封时间、开板次数综合（权重最高18分）</li>
-                        <li>龙虎榜（v2新增）：上榜净买强度+席位画像（机构净买加分/拉萨散户接盘减分），未上榜中性9分</li>
-                        <li>一票否决：触发性价比过低、情绪冰点加速等条件时直接否决</li>
+                        <li>板类型：换手板提分（筹码交换充分），连续一字板降分（断层易A杀）</li>
+                        <li>龙虎榜（v2新增）：上榜净买强度+席位画像（机构净买加分/拉萨散户接盘减分/上塘路等砸盘席位买入减分），未上榜中性9分</li>
+                        <li>未来龙头（TODO24.4）：高位断板日的1~3板接班候选（板块效应强或封板早+板型健康），板块身位分加成</li>
+                        <li>一票否决：触发性价比过低、情绪冰点加速、严重异动风险（10日100%/30日200%）等条件时直接否决且晋级概率归0</li>
                         <li>晋级概率：基于评分与同板级历史晋级率的估算，非精确预测</li>
                         <li>预测回溯（TODO13.2）：昨日/3日/5日最准方案按历史预测vs实际结果自动调权，可一键设为当前方案</li>
                         <li>阈值自定义：点击"阈值设置"可微调当前方案，自生效日起前端重算，生效日之前保留采集端评分</li>
@@ -2265,8 +2358,11 @@ const FupanRenderer = (function () {
             return;
         }
 
+        // 自定义阈值或黑名单非空时展示"自定义"列（TODO24.5：黑名单用默认参数重算仅应用否决）
         const config = FupanScoring.getSavedConfig();
-        const custom = config && !FupanScoring.isDefaultConfig(config) ? config : null;
+        const hasCustom = config && !FupanScoring.isDefaultConfig(config);
+        const custom = hasCustom ? config
+            : (FupanScoring.hasBlacklist() ? FupanScoring.defaultConfig() : null);
 
         const rows = [];
         for (const d of targets) {
@@ -2459,6 +2555,162 @@ const FupanRenderer = (function () {
     }
 
     /**
+     * 渲染龙虎榜黑名单席位管理面板（TODO24.5）
+     * 主流程：聚合当日全部上榜席位（按席位去重，净买额排序）→ 当前黑名单标签
+     *        → 搜索过滤 + 手动输入添加 → 席位行点击切换黑名单 → 保存并重算整tab
+     * 黑名单项作为关键词匹配席位名（包含匹配，同砸盘席位库语义）；
+     * 仅前端重算生效（采集端无法读取浏览器配置），保存后当前方案评分重算
+     * @param {HTMLElement} panel 面板容器
+     * @param {HTMLElement} container tab容器（保存后整tab重渲染）
+     * @param {Object} day 单日数据（聚合当日龙虎榜席位）
+     * @param {string} dateStr 当前交易日（保存后重渲染用）
+     */
+    function renderBlacklistPanel(panel, container, day, dateStr) {
+        if (!panel) return;
+        // 工作副本：面板内的增删先改内存数组，保存时才持久化
+        let blArr = FupanScoring.getBlacklist().slice();
+
+        // 聚合当日全部上榜席位：name → {name, cnt上榜股数, net当日净买合计}
+        const seatAgg = {};
+        (day.ztpool || []).forEach(s => {
+            if (!s.lhb || !s.lhb.onList) return;
+            (s.lhb.seats || []).forEach(seat => {
+                if (!seat || !seat.name) return;
+                const nm = String(seat.name);
+                const a = seatAgg[nm] = seatAgg[nm] || { name: nm, cnt: 0, net: 0 };
+                a.cnt += 1;
+                const net = seat.net !== undefined && seat.net !== null
+                    ? Number(seat.net) : (Number(seat.buy) || 0) - (Number(seat.sell) || 0);
+                if (!isNaN(net)) a.net += net;
+            });
+        });
+        const seats = Object.keys(seatAgg).map(k => seatAgg[k]).sort((a, b) => b.net - a.net);
+
+        /**
+         * 席位名是否命中黑名单（黑名单项包含于席位名）
+         */
+        const inBl = nm => blArr.some(b => String(nm).includes(b));
+
+        /**
+         * 重绘当日席位列表区（搜索输入时局部重绘，避免输入框整体重建导致焦点丢失）
+         */
+        const paintList = () => {
+            const box = panel.querySelector('[data-fp-seats-box]');
+            if (!box) return;
+            const kw = ((panel.querySelector('[data-fp-bl-search]') || {}).value || '').trim();
+            const list = kw ? seats.filter(s => s.name.includes(kw)) : seats;
+            const rows = list.map(s => {
+                const on = inBl(s.name);
+                const netYi = FupanData.formatYi(s.net);
+                return `
+                    <div class="fp-bl-seat ${on ? 'fp-bl-on' : ''}">
+                        <span class="fp-bl-seat-name" title="当日上榜${s.cnt}只股票">${esc(s.name)}</span>
+                        <span class="fp-bl-seat-net ${s.net >= 0 ? 'change-up' : 'change-down'}">${s.net >= 0 ? '+' : ''}${netYi}亿</span>
+                        <span class="fp-bl-seat-cnt">${s.cnt}股</span>
+                        <button class="fp-scheme-btn" data-fp-bl-seat="${esc(s.name)}">${on ? '移出黑名单' : '加入黑名单'}</button>
+                    </div>`;
+            }).join('');
+            box.innerHTML = rows || '<div class="fp-empty">无匹配席位（当日无龙虎榜数据或搜索无结果）</div>';
+            bindSeatRows();
+        };
+
+        /**
+         * 绑定席位行加入/移出黑名单事件
+         */
+        const bindSeatRows = () => {
+            panel.querySelectorAll('[data-fp-bl-seat]').forEach(el =>
+                el.addEventListener('click', () => {
+                    const nm = el.dataset.fpBlSeat;
+                    if (inBl(nm)) {
+                        // 移出：删除所有能匹配到该席位的黑名单项（可能一个短关键词匹配多个席位）
+                        blArr = blArr.filter(b => !nm.includes(b));
+                    } else if (blArr.indexOf(nm) < 0) {
+                        blArr.push(nm);
+                    }
+                    paint();
+                }));
+        };
+
+        /**
+         * 重绘面板内容（列表区/黑名单区随工作副本联动；搜索词保留不重置）
+         */
+        const paint = () => {
+            const kw = ((panel.querySelector('[data-fp-bl-search]') || {}).value || '').trim();
+            const list = kw ? seats.filter(s => s.name.includes(kw)) : seats;
+            const blChips = blArr.length
+                ? blArr.map(b => `<span class="fp-bl-chip" title="${esc(b)}（点击移除）" data-fp-bl-remove="${esc(b)}">${esc(b)} ✕</span>`).join('')
+                : '<span class="fp-lhb-off">暂无黑名单席位</span>';
+            const rows = list.map(s => {
+                const on = inBl(s.name);
+                const netYi = FupanData.formatYi(s.net);
+                return `
+                    <div class="fp-bl-seat ${on ? 'fp-bl-on' : ''}">
+                        <span class="fp-bl-seat-name" title="当日上榜${s.cnt}只股票">${esc(s.name)}</span>
+                        <span class="fp-bl-seat-net ${s.net >= 0 ? 'change-up' : 'change-down'}">${s.net >= 0 ? '+' : ''}${netYi}亿</span>
+                        <span class="fp-bl-seat-cnt">${s.cnt}股</span>
+                        <button class="fp-scheme-btn" data-fp-bl-seat="${esc(s.name)}">${on ? '移出黑名单' : '加入黑名单'}</button>
+                    </div>`;
+            }).join('');
+            panel.innerHTML = `
+                <div class="fp-cfg-head">
+                    <span class="fp-cfg-title">龙虎榜黑名单席位管理</span>
+                    <span class="fp-cfg-hint">黑名单席位在某股票龙虎榜席位中<b>净买入</b>（净卖出不触发）时，该股票评分一票否决；黑名单项按关键词匹配席位名（如填"上塘路"可匹配所有含该词的席位）。仅本浏览器前端重算生效，采集端落盘评分不变</span>
+                </div>
+                <div class="fp-cfg-group">当前黑名单（${blArr.length}项，点击✕移除）</div>
+                <div class="fp-bl-chips">${blChips}</div>
+                <div class="fp-cfg-grid">
+                    <input type="text" class="fp-bl-input" data-fp-bl-input placeholder="手动输入席位名/关键词（历史席位或短关键词）">
+                    <button class="btn btn-secondary btn-sm" data-fp-bl-add>添加</button>
+                </div>
+                <div class="fp-cfg-group">当日上榜席位（去重${seats.length}个，按净买额排序；点击右侧按钮加入/移出）</div>
+                <div class="fp-cfg-grid">
+                    <input type="text" class="fp-bl-input" data-fp-bl-search placeholder="搜索席位名过滤…" value="${esc(kw)}">
+                </div>
+                <div class="fp-bl-seats" data-fp-seats-box>${rows || '<div class="fp-empty">无匹配席位（当日无龙虎榜数据或搜索无结果）</div>'}</div>
+                <div class="fp-cfg-actions">
+                    <button class="btn btn-primary" data-fp-bl-save>保存并重算</button>
+                    <button class="btn btn-secondary" data-fp-bl-clear>清空黑名单</button>
+                </div>`;
+
+            // 黑名单标签移除
+            panel.querySelectorAll('[data-fp-bl-remove]').forEach(el =>
+                el.addEventListener('click', () => {
+                    blArr = blArr.filter(b => b !== el.dataset.fpBlRemove);
+                    paint();
+                }));
+            bindSeatRows();
+            // 手动输入添加（回车/按钮均可）
+            const doAdd = () => {
+                const inp = panel.querySelector('[data-fp-bl-input]');
+                const v = String(inp.value || '').trim();
+                if (!v) return;
+                if (blArr.indexOf(v) < 0) blArr.push(v);
+                paint();
+            };
+            panel.querySelector('[data-fp-bl-add]').addEventListener('click', doAdd);
+            panel.querySelector('[data-fp-bl-input]').addEventListener('keydown', e => {
+                if (e.key === 'Enter') doAdd();
+            });
+            // 搜索过滤（局部重绘列表区，保留输入焦点）
+            panel.querySelector('[data-fp-bl-search]').addEventListener('input', paintList);
+            // 保存并重算：去重持久化 → 收起面板 → 整tab重渲染（评分应用黑名单否决）
+            panel.querySelector('[data-fp-bl-save]').addEventListener('click', () => {
+                FupanScoring.saveBlacklist(blArr);
+                FupanData.setSetting('fupan_score_bl_open', false);
+                renderScore(container, day, dateStr);
+            });
+            // 清空黑名单（需确认；清空后黑名单否决不再触发）
+            panel.querySelector('[data-fp-bl-clear]').addEventListener('click', () => {
+                if (!blArr.length) return;
+                if (!window.confirm('确定清空全部黑名单席位？清空后相关股票不再被一票否决')) return;
+                blArr = [];
+                paint();
+            });
+        };
+        paint();
+    }
+
+    /**
      * 生成Top5卡片HTML（雷达图占位，渲染后挂载；上榜股附龙虎榜信息行）
      * @param {Object} s top5标的
      * @param {Object} weights 权重
@@ -2474,6 +2726,7 @@ const FupanRenderer = (function () {
                 <div class="fp-top5-head">
                     <span class="fp-top5-rank">#${idx + 1}</span>
                     <span class="fp-top5-name">${stockLink(s.code, s.name)}</span>
+                    ${s.dragon ? '<span class="fp-dragon-badge" title="高位断板日的1~3板接班候选：板块效应强或封板早+板型健康，下一轮主线龙头潜质（板块身位分已加成）">未来龙头</span>' : ''}
                     <span class="col-code">${esc(s.code)}</span>
                     <span class="fp-lb">${s.lbCount ?? '--'}板</span>
                 </div>
@@ -2481,7 +2734,7 @@ const FupanRenderer = (function () {
                     ${typeBadge(s.limitType)}
                     <span class="fp-industry">${esc(s.industry || '--')}</span>
                 </div>
-                ${top5LhbHtml(lhb)}
+                ${top5LhbHtml(lhb, s.code)}
                 <div class="fp-top5-score-row">
                     <div class="fp-top5-score">
                         <span class="fp-score-big ${scoreClass(s.score.total)}">${s.score.total}</span>

@@ -58,8 +58,13 @@ const FupanScoring = (function () {
     // 配置持久化key
     const STORE_KEY = 'fupan_score_config';
 
-    // 板类型强度分（默认板型权重12分制，与后端一致）
-    const BOARD_TYPE_SCORE = { '一字板': 12, 'T字板': 10, '换手板': 8, '回封板': 5, '厂字板': 5 };
+    // 龙虎榜黑名单席位持久化key（TODO24.5：用户自定义，存浏览器localStorage，
+    // 采集端Actions无法读取，故黑名单否决仅前端重算结果生效，采集端落盘评分不变）
+    const BLACKLIST_KEY = 'fupan_lhb_blacklist';
+
+    // 板类型强度分（默认板型权重12分制，与后端一致；
+    // TODO24.1：换手板提分（筹码交换充分参与价值高），一字板轻微折价，连续一字板另行降分）
+    const BOARD_TYPE_SCORE = { '一字板': 11, 'T字板': 10.5, '换手板': 10, '回封板': 5, '厂字板': 5 };
 
     // 情绪阶段环境分（默认情绪权重8分制，与后端一致）
     const SENTIMENT_SCORE = { '高潮': 8, '发酵': 6.5, '回暖': 5, '退潮': 2.5, '冰点': 1 };
@@ -181,11 +186,16 @@ const FupanScoring = (function () {
 
     /**
      * 板类型原始分（满分12）
+     * TODO24.1：连续一字板降分——2板及以上的一字板筹码完全断层、无换手，
+     * 开板大概率A杀，参与价值低（7分）；单日一字板不降（龙头偶尔一字板不影响）
      * @param {string} limitType 涨停板类型
+     * @param {number|null} lbCount 连板数
      * @returns {number}
      */
-    function rawBoardType(limitType) {
-        return BOARD_TYPE_SCORE[limitType] !== undefined ? BOARD_TYPE_SCORE[limitType] : 6.5;
+    function rawBoardType(limitType, lbCount) {
+        let score = BOARD_TYPE_SCORE[limitType] !== undefined ? BOARD_TYPE_SCORE[limitType] : 6.5;
+        if (limitType === '一字板' && (lbCount || 1) >= 2) score = 7;
+        return score;
     }
 
     /**
@@ -212,10 +222,20 @@ const FupanScoring = (function () {
         return SENTIMENT_SCORE[phase] !== undefined ? SENTIMENT_SCORE[phase] : 4;
     }
 
+    // 次日砸盘风险席位关键词（TODO24.3，买方出现即减分，多项命中取最大减分；
+    // 与后端 DUMP_SEAT_KEYWORDS 对齐，风格档案参考 doc/每日复盘/龙虎榜/A股游资风格比较）
+    const DUMP_SEAT_KEYWORDS = [
+        ['上塘路', 3],    // 典型快进快出/一日游，次日直接砸盘
+        ['国新北京', 3],  // 国新证券北京分公司：高频切换"今天买明天卖"，兑现风险高
+        ['佛山', 2],      // 佛山系：首板/启动套利，兑现速度快
+        ['紫阳东路', 2]   // 武汉紫阳东路：大资金轮动型，次日兑现风险中高
+    ];
+
     /**
      * 龙虎榜资金质量原始分（满分15，TODO13.1，与后端 _score_lhb 逐条对齐）
-     * 未上榜=9中性；上榜=基础7+净买强度+席位画像加减
-     * @param {Object|null} lhb 涨停股lhb字段（含onList/netBuyRatio/style）
+     * 未上榜=9中性；上榜=基础7+净买强度+席位画像加减；
+     * TODO24.3：知名砸盘席位买入减分（多项命中取最大减分）
+     * @param {Object|null} lhb 涨停股lhb字段（含onList/netBuyRatio/style/seats）
      * @returns {number}
      */
     function rawLhb(lhb) {
@@ -234,6 +254,16 @@ const FupanScoring = (function () {
         else if (instNet < 0) score -= 2;
         if ((style.patternNet || 0) > 0) score += 2;
         if ((style.retailBuyRatio || 0) >= 0.4) score -= 2;
+        // TODO24.3：知名砸盘席位买入减分（多项命中取最大减分，避免过度惩罚）
+        let dumpPenalty = 0;
+        (lhb.seats || []).forEach(seat => {
+            if (!seat || !seat.buy) return;
+            const nm = String(seat.name || '');
+            DUMP_SEAT_KEYWORDS.forEach(([kw, pen]) => {
+                if (nm.includes(kw) && pen > dumpPenalty) dumpPenalty = pen;
+            });
+        });
+        score -= dumpPenalty;
         return Math.round(Math.max(0, Math.min(15, score)) * 10) / 10;
     }
 
@@ -257,7 +287,8 @@ const FupanScoring = (function () {
 
     /**
      * 一票否决检查（阈值可配置；数值0/时刻空 = 关闭该项）
-     * @param {Object} stock 涨停股（lastSealTime/openCount/lbCount/floatMV）
+     * TODO24.2：新增严重异动风险否决（固定规则，非阈值型，不可配置）
+     * @param {Object} stock 涨停股（lastSealTime/openCount/lbCount/floatMV/code/name/stats）
      * @param {string} phase 当日情绪阶段
      * @param {Object} veto 否决阈值配置
      * @returns {null|string} 否决原因
@@ -279,21 +310,100 @@ const FupanScoring = (function () {
             && stock.floatMV > Number(veto.floatMvYi) * 1e8) {
             return '流通市值超' + Number(veto.floatMvYi) + '亿';
         }
+        // 严重异动风险（TODO24.2：当日涨停触发10日100%/30日200%异动）
+        const severe = severeDeviationRisk(stock.code, stock.name, stock.stats);
+        if (severe) return severe;
+        // 黑名单席位净买入（TODO24.5：用户自定义席位，净买入一票否决；净卖出不触发；
+        // 黑名单项作为关键词匹配席位名，支持从当日席位全名或短关键词拉黑）
+        if (stock.lhb && stock.lhb.onList) {
+            const bl = getBlacklist();
+            if (bl.length) {
+                const hit = (stock.lhb.seats || []).find(seat => {
+                    if (!seat || !seat.name) return false;
+                    const nm = String(seat.name);
+                    if (!bl.some(b => nm.includes(b))) return false;
+                    const net = seat.net !== undefined && seat.net !== null
+                        ? Number(seat.net) : (Number(seat.buy) || 0) - (Number(seat.sell) || 0);
+                    return net > 0;
+                });
+                if (hit) return '黑名单席位净买入(' + hit.name + ')';
+            }
+        }
         return null;
     }
 
     /**
+     * 涨停幅度（与后端 analyzers.limit_ratio 对齐）
+     * @param {string} code 股票代码
+     * @param {string} name 股票名称（ST判5%）
+     * @returns {number} 如0.10
+     */
+    function limitRatio(code, name) {
+        if (/ST/i.test(String(name || ''))) return 0.05;
+        const c = String(code || '');
+        if (c.startsWith('30') || c.startsWith('68')) return 0.20;
+        if (c.startsWith('8') || c.startsWith('4') || c.startsWith('92')) return 0.30;
+        return 0.10;
+    }
+
+    /**
+     * 严重异动风险判定（TODO24.2，与后端 severe_deviation_risk 逐条对齐）
+     * 用东财涨停统计"N天/M板"+涨停幅度近似区间累计涨幅：
+     * - 100异动：N<=10 且 (1+r)^M-1 >= 100%
+     * - 200异动：N<=30 且 (1+r)^M-1 >= 200%
+     * @param {string} code 股票代码
+     * @param {string} name 股票名称
+     * @param {string} stats 东财涨停统计 "N/M"（如'8/4'=8天4板）
+     * @returns {null|string} 否决原因
+     */
+    function severeDeviationRisk(code, name, stats) {
+        if (!stats) return null;
+        const parts = String(stats).split('/');
+        const days = parseInt(parts[0], 10), boards = parseInt(parts[1], 10);
+        if (!days || !boards || isNaN(days) || isNaN(boards)) return null;
+        const gain = Math.pow(1 + limitRatio(code, name), boards) - 1;
+        if (days <= 10 && gain >= 1.0) return '严重异动风险(10日100%)';
+        if (days <= 30 && gain >= 2.0) return '严重异动风险(30日200%)';
+        return null;
+    }
+
+    /**
+     * 未来主线龙头候选判定（TODO24.4，与后端 is_dragon_seed 逐条对齐）
+     * 接班逻辑：高位断板日（昨日最高板>=4且今日高度回落）→ 1~3板中的
+     * 板块效应强或（封板早且板型健康）的股票为下一轮主线龙头候选
+     * @param {Object} stock 涨停股（lbCount/firstSealTime/limitType）
+     * @param {number} sectorZtCount 同行业今日涨停家数（含自身）
+     * @param {number} prevMaxLb 昨日最高连板数
+     * @param {number} todayMaxLb 今日最高连板数
+     * @returns {boolean}
+     */
+    function isDragonSeed(stock, sectorZtCount, prevMaxLb, todayMaxLb) {
+        if (!prevMaxLb || prevMaxLb < 4) return false;
+        if (!todayMaxLb || todayMaxLb >= prevMaxLb) return false;
+        const lb = stock.lbCount || 0;
+        if (lb < 1 || lb > 3) return false;
+        const early = (toSecs(stock.firstSealTime) || 999999) <= 10 * 3600;
+        const goodType = ['换手板', 'T字板', '一字板'].indexOf(stock.limitType) >= 0;
+        return (sectorZtCount || 0) >= 3 || (early && goodType);
+    }
+
+    /**
      * 单只涨停股9维评分（前端重算版，v2含龙虎榜维度）
+     * TODO24.4：dragonSeed=true时板块身位分取max(原分,6.5)（接班龙头潜质身位分）
      * @param {Object} stock 涨停股（ztpool元素，含lhb字段）
      * @param {number} sectorZtCount 同行业今日涨停家数（含自身）
      * @param {number} sectorMaxLb 同行业今日最高连板数
      * @param {string} phase 当日情绪阶段
      * @param {number|null} recentZt 近期涨停次数
      * @param {Object} config 阈值配置
-     * @returns {{total:number, dimensions:Object, veto:null|string}}
+     * @param {boolean} [dragonSeed] 未来主线龙头候选（TODO24.4）
+     * @returns {{total:number, dimensions:Object, veto:null|string, dragon:boolean}}
      */
-    function scoreStock(stock, sectorZtCount, sectorMaxLb, phase, recentZt, config) {
+    function scoreStock(stock, sectorZtCount, sectorMaxLb, phase, recentZt, config, dragonSeed) {
         const w = config.weights;
+        // TODO24.4 接班龙头潜质身位分（低位但有下一轮主线潜质，身位分视同次高位）
+        let posRaw = rawPosition(stock.lbCount, sectorMaxLb, sectorZtCount);
+        if (dragonSeed) posRaw = Math.max(posRaw, 6.5);
         const dims = {
             priceLevel: scaleDim('priceLevel', rawPriceLevel(stock.price), w),
             floatMV: scaleDim('floatMV', rawFloatMV(stock.floatMV), w),
@@ -301,15 +411,15 @@ const FupanScoring = (function () {
             sectorEffect: scaleDim('sectorEffect', rawSectorEffect(sectorZtCount), w),
             sealQuality: scaleDim('sealQuality',
                 rawSealQuality(stock.sealRatio, stock.firstSealTime, stock.openCount), w),
-            boardType: scaleDim('boardType', rawBoardType(stock.limitType), w),
-            position: scaleDim('position', rawPosition(stock.lbCount, sectorMaxLb, sectorZtCount), w),
+            boardType: scaleDim('boardType', rawBoardType(stock.limitType, stock.lbCount), w),
+            position: scaleDim('position', posRaw, w),
             sentiment: scaleDim('sentiment', rawSentiment(phase), w),
             lhb: scaleDim('lhb', rawLhb(stock.lhb), w)
         };
         let total = 0;
         Object.keys(dims).forEach(k => { total += dims[k]; });
         total = Math.round(total * 10) / 10;
-        return { total, dimensions: dims, veto: checkVeto(stock, phase, config.veto) };
+        return { total, dimensions: dims, veto: checkVeto(stock, phase, config.veto), dragon: !!dragonSeed };
     }
 
     /**
@@ -367,14 +477,23 @@ const FupanScoring = (function () {
             st.maxLB = Math.max(st.maxLB, s.lbCount || 0);
         });
 
+        // TODO24.4 未来龙头判定上下文：昨日最高板（落盘scores.prevMaxLB，旧数据无=0不判定）+ 今日最高板
+        const prevMaxLb = Number((((day.scores || {}).prevMaxLB)) || 0);
+        let todayMaxLb = 0;
+        ztpool.forEach(s => { if ((s.lbCount || 0) > todayMaxLb) todayMaxLb = s.lbCount || 0; });
+
         const scored = ztpool.map(s => {
             const st = sectorStats[s.industry || '其他'] || { count: 1, maxLB: 1 };
+            const dragon = isDragonSeed(s, st.count, prevMaxLb, todayMaxLb);
             const sc = scoreStock(s, st.count, st.maxLB, phase,
-                s.recentZt === undefined ? null : s.recentZt, config);
-            // 晋级概率：从落盘（概率-评分）反推该股历史基线，仅评分调整项随新评分变化
+                s.recentZt === undefined ? null : s.recentZt, config, dragon);
+            // 晋级概率：从落盘（概率-评分）反推该股历史基线，仅评分调整项随新评分变化；
+            // TODO24.2：一票否决股概率直接归0（与后端 compute_probability veto 分支一致）
             const stored = storedByCode.get(s.code) || {};
             let probability = null;
-            if (stored.probability !== null && stored.probability !== undefined
+            if (sc.veto) {
+                probability = 0;
+            } else if (stored.probability !== null && stored.probability !== undefined
                 && stored.score !== null && stored.score !== undefined) {
                 const storedAdjust = clampAdjust((stored.score - 70) / 100 * 0.3);
                 const base = stored.probability - storedAdjust;
@@ -384,7 +503,7 @@ const FupanScoring = (function () {
             return {
                 code: s.code, name: s.name, lbCount: s.lbCount || 1,
                 industry: s.industry || '', limitType: s.limitType !== undefined ? s.limitType : null,
-                score: sc, probability,
+                score: sc, probability, dragon,
                 advice: buildAdvice(sc.total, probability, sc.veto, config.advice)
             };
         });
@@ -397,7 +516,7 @@ const FupanScoring = (function () {
             vetoed: ranked.vetoed,
             all: scored.map(x => ({
                 code: x.code, name: x.name, score: x.score.total,
-                probability: x.probability, veto: x.score.veto
+                probability: x.probability, dragon: x.dragon, veto: x.score.veto
             }))
         };
     }
@@ -430,6 +549,33 @@ const FupanScoring = (function () {
     /** 清除阈值配置（恢复默认） */
     function clearConfig() {
         try { localStorage.removeItem(STORE_KEY); } catch (e) { /* 忽略 */ }
+    }
+
+    /**
+     * 读取龙虎榜黑名单席位列表（TODO24.5）
+     * @returns {Array<string>} 席位名/关键词数组（未配置返回空数组）
+     */
+    function getBlacklist() {
+        const v = FupanData.getSetting(BLACKLIST_KEY, []);
+        return Array.isArray(v) ? v.map(s => String(s || '').trim()).filter(Boolean) : [];
+    }
+
+    /**
+     * 保存龙虎榜黑名单席位列表（去空格、去重保序后持久化）
+     * @param {Array<string>} list 席位名/关键词数组
+     */
+    function saveBlacklist(list) {
+        const cleaned = [];
+        (list || []).forEach(s => {
+            const v = String(s || '').trim();
+            if (v && cleaned.indexOf(v) < 0) cleaned.push(v);
+        });
+        FupanData.setSetting(BLACKLIST_KEY, cleaned);
+    }
+
+    /** 黑名单是否非空（非空时评分需前端重算使黑名单否决生效） */
+    function hasBlacklist() {
+        return getBlacklist().length > 0;
     }
 
     /**
@@ -661,6 +807,10 @@ const FupanScoring = (function () {
         clearConfig,
         isActiveFor,
         isDefaultConfig,
-        normalizeConfig
+        normalizeConfig,
+        // 龙虎榜黑名单席位（TODO24.5）
+        getBlacklist,
+        saveBlacklist,
+        hasBlacklist
     };
 })();

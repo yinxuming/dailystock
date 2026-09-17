@@ -1428,6 +1428,20 @@ body.embedded .app-layout {
     border: 1px solid rgba(16, 185, 129, 0.25);
 }
 
+/* 未来主线龙头候选徽章（TODO24.4）：金色潜龙标识（Top5卡片/全量评分表） */
+.fp-dragon-badge {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    background: rgba(250, 204, 21, 0.15);
+    color: #facc15;
+    border: 1px solid rgba(250, 204, 21, 0.4);
+    cursor: help;
+    white-space: nowrap;
+}
+
 /* 龙虎榜（TODO13.1）：Top5卡片信息行 + 池表格列 */
 .fp-top5-lhb {
     display: flex;
@@ -1563,6 +1577,110 @@ body.embedded .app-layout {
     border-radius: 10px;
     padding: 14px 16px;
     margin-bottom: 14px;
+}
+
+/* 黑名单席位管理面板（TODO24.5，与阈值面板同容器风格） */
+[data-fp-blacklist-panel] {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 14px;
+}
+
+/* 当前黑名单标签区 */
+.fp-bl-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.fp-bl-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    color: #fca5a5;
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.fp-bl-chip:hover {
+    background: rgba(239, 68, 68, 0.25);
+}
+
+/* 手动输入/搜索输入框 */
+.fp-bl-input {
+    flex: 1;
+    min-width: 220px;
+    max-width: 420px;
+    padding: 5px 8px;
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    color: #e2e8f0;
+    font-size: 12px;
+    outline: none;
+}
+
+.fp-bl-input:focus {
+    border-color: #3b82f6;
+}
+
+/* 当日席位列表（滚动区，行式布局） */
+.fp-bl-seats {
+    max-height: 260px;
+    overflow-y: auto;
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    margin-top: 4px;
+}
+
+.fp-bl-seat {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 5px 10px;
+    border-bottom: 1px solid #1e293b;
+    font-size: 12px;
+}
+
+.fp-bl-seat:last-child {
+    border-bottom: none;
+}
+
+.fp-bl-seat:hover {
+    background: rgba(59, 130, 246, 0.08);
+}
+
+/* 已在黑名单的席位行高亮 */
+.fp-bl-seat.fp-bl-on .fp-bl-seat-name {
+    color: #fca5a5;
+}
+
+.fp-bl-seat-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #cbd5e1;
+}
+
+.fp-bl-seat-net {
+    width: 86px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.fp-bl-seat-cnt {
+    width: 40px;
+    text-align: right;
+    color: #64748b;
 }
 
 .fp-cfg-head {
