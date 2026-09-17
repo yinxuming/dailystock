@@ -132,7 +132,7 @@ const FupanRenderer = (function () {
         const title = `净买额占总成交比 ${(lhb.netBuyRatio ?? 0).toFixed(2)}%，点击查看东财龙虎榜详情`;
         if (code) {
             return `<a class="${cls}" title="${title}" target="_blank" rel="noopener" `
-                + `href="https://data.eastmoney.com/stock/lhb,${esc(code)}.html">${txt}</a>`;
+                + `href="https://data.eastmoney.com/stock/lhb/${esc(code)}.html">${txt}</a>`;
         }
         return `<span class="${cls}" title="净买额占总成交比 ${(lhb.netBuyRatio ?? 0).toFixed(2)}%">${txt}</span>`;
     }
