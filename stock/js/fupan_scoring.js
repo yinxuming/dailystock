@@ -561,7 +561,8 @@ const FupanScoring = (function () {
         });
 
         // TODO25.3：成交额相对评分上下文（全市场成交额）
-        const marketTotalAmount = (day.market || {}).totalAmount;
+        // 注意：落盘结构为 day.market.allA.totalAmount（与后端 fetch.py 落盘字段一致）
+        const marketTotalAmount = ((day.market || {}).allA || {}).totalAmount;
         // TODO24.4 未来龙头判定上下文：昨日最高板（落盘scores.prevMaxLB，旧数据无=0不判定）+ 今日最高板
         const prevMaxLb = Number((((day.scores || {}).prevMaxLB)) || 0);
         let todayMaxLb = 0;
