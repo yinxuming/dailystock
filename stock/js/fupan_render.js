@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 每日复盘渲染模块（FupanRenderer）
  *
  * 职责：四个子tab的DOM渲染（数据由FupanData提供，图表由FupanCharts提供）
@@ -470,12 +470,14 @@ const FupanRenderer = (function () {
     const BOARD_VIEW_KEY = 'fupan_board_view';          // 全部/行业/概念
     const BOARD_FOCUS_KEY = 'fupan_sectors_focus_only'; // 仅显示关注板块
     const MATRIX_COUNT_KEY = 'fupan_matrix_count';      // 矩阵每列涨跌榜板块数
+    const MATRIX_PERIOD_KEY = 'fupan_matrix_period';    // 矩阵周期交易日数（TODO26.1 默认20，可调）
     const MATRIX_FOCUS_KEY = 'fupan_matrix_focus_only'; // 矩阵仅显示关注板块
     const BOARD_TOP_N = 50;                             // 涨跌榜条数上限
 
     /**
      * 渲染板块轮动tab
-     * 主流程：当日板块涨跌榜（全部/行业/概念，默认全部；关注板块筛选）→ 近10日轮动矩阵（涨跌双榜、数量可调、关注筛选、固定身份色）
+     * 主流程：当日板块涨跌榜（全部/行业/概念，默认全部；关注板块筛选）→ 近N日轮动矩阵（涨跌双榜、数量可调、周期可调、关注筛选、固定身份色、日期降序）
+     * TODO26.1：默认近20日（原10日），周期天数持久化可调（3~40），日期降序（最新在左）
      * @param {HTMLElement} container 容器
      * @param {Object} day 单日复盘数据
      * @param {string} dateStr 当前日期
@@ -483,10 +485,11 @@ const FupanRenderer = (function () {
     function renderSectors(container, day, dateStr) {
         const sectors = day.sectors || {};
 
-        // 工具栏状态（持久化：视图默认"全部"，关注筛选默认不勾选）
+        // 工具栏状态（持久化：视图默认"全部"，关注筛选默认不勾选；TODO26.1 周期默认20日）
         const view = FupanData.getSetting(BOARD_VIEW_KEY, 'all');
         const focusOnly = FupanData.getSetting(BOARD_FOCUS_KEY, false);
         const mCount = clampMatrixCount(FupanData.getSetting(MATRIX_COUNT_KEY, 5));
+        const mPeriod = clampMatrixPeriod(FupanData.getSetting(MATRIX_PERIOD_KEY, 20));
         const mFocus = FupanData.getSetting(MATRIX_FOCUS_KEY, false);
 
         const boardHtml = `
@@ -502,18 +505,21 @@ const FupanRenderer = (function () {
 
         const matrixHtml = `
             <div class="fp-board-toolbar">
+                <label class="fp-check">周期天数
+                    <input type="number" class="fp-matrix-period" data-fp-matrix-period min="3" max="40" step="1" value="${mPeriod}"> 个交易日（日期降序，最新在左）
+                </label>
                 <label class="fp-check">每列显示
                     <input type="number" class="fp-matrix-n" data-fp-matrix-n min="3" max="10" step="1" value="${mCount}"> 个板块（涨/跌各）
                 </label>
                 ${checkHtml('data-fp-matrix-focus', mFocus, '仅显示关注板块')}
             </div>
             <div class="fp-rot-wrap" id="fpMatrixWrap">
-                <div class="loading"><div class="loading-spinner"></div><span class="loading-text">正在加载近10日板块数据...</span></div>
+                <div class="loading"><div class="loading-spinner"></div><span class="loading-text">正在加载近${mPeriod}日板块数据...</span></div>
             </div>`;
 
         container.innerHTML = `
             ${section('当日板块涨跌榜', boardHtml)}
-            ${section('近10日行业轮动矩阵', matrixHtml)}`;
+            ${section(`近${mPeriod}日行业轮动矩阵`, matrixHtml)}`;
 
         const panelEl = document.getElementById('fpBoardPanels');
         const matrixWrap = document.getElementById('fpMatrixWrap');
@@ -550,17 +556,20 @@ const FupanRenderer = (function () {
             });
         });
 
-        // 矩阵（近10日，异步多日取数）
+        // 矩阵（TODO26.1：可配置周期天数，日期降序=最新在左）
         const rebuildMatrix = async () => {
             const n = clampMatrixCount(FupanData.getSetting(MATRIX_COUNT_KEY, 5));
+            const p = clampMatrixPeriod(FupanData.getSetting(MATRIX_PERIOD_KEY, 20));
             const mFocusNow = FupanData.getSetting(MATRIX_FOCUS_KEY, false);
             try {
-                const dates = await FupanData.getRecentDates(dateStr, 10);
-                // 当日无缓存文件的返回null，矩阵对应列留空，绝不拿其他日期的数据顶替（保证数据正确性）
-                const daysData = await Promise.all(dates.map(async d => {
+                const datesAsc = await FupanData.getRecentDates(dateStr, p);
+                // TODO26.1：日期降序（最新在左），daysData 数组同步反转
+                const dates = datesAsc.slice().reverse();
+                const daysAsc = await Promise.all(datesAsc.map(async d => {
                     try { return await FupanData.getDay(d); }
                     catch (e) { return null; }
                 }));
+                const daysData = daysAsc.slice().reverse();
                 buildMatrix(matrixWrap, dates, daysData, n, mFocusNow);
             } catch (e) {
                 matrixWrap.innerHTML = `<div class="error"><span>矩阵加载失败: ${esc(e.message)}</span></div>`;
@@ -568,6 +577,19 @@ const FupanRenderer = (function () {
         };
         rebuildMatrix();
 
+        // 矩阵周期天数调整（TODO26.1 持久化，重建矩阵）
+        const pInput = container.querySelector('[data-fp-matrix-period]');
+        if (pInput) pInput.addEventListener('change', () => {
+            const p = clampMatrixPeriod(pInput.value);
+            pInput.value = p;
+            FupanData.setSetting(MATRIX_PERIOD_KEY, p);
+            // 标题中的"近X日"同步更新
+            const sec = container.querySelector('h3.fp-section-title');
+            if (sec && sec.textContent.includes('日行业轮动矩阵')) {
+                sec.textContent = `近${p}日行业轮动矩阵`;
+            }
+            rebuildMatrix();
+        });
         // 矩阵板块数调整（持久化，重建矩阵）
         const nInput = container.querySelector('[data-fp-matrix-n]');
         if (nInput) nInput.addEventListener('change', () => {
@@ -586,13 +608,22 @@ const FupanRenderer = (function () {
 
     /**
      * 矩阵板块数钳制（3~10，默认5）
-     * @param {*} v 输入值
-     * @returns {number}
      */
     function clampMatrixCount(v) {
         const n = Math.round(Number(v));
         if (isNaN(n)) return 5;
         return Math.max(3, Math.min(10, n));
+    }
+
+    /**
+     * 矩阵周期天数钳制（TODO26.1：3~40，默认20；原硬编码10日）
+     * @param {*} v 输入值
+     * @returns {number}
+     */
+    function clampMatrixPeriod(v) {
+        const p = Math.round(Number(v));
+        if (isNaN(p)) return 20;
+        return Math.max(3, Math.min(40, p));
     }
 
     /**
@@ -1793,30 +1824,37 @@ const FupanRenderer = (function () {
 
         // 0. 配置状态条（已配置自定义阈值/黑名单时提示生效状态）
         let configBanner = '';
-        const blTxt = blActive ? `黑名单席位生效中（${FupanScoring.getBlacklist().length}个席位净买入的股票一票否决）` : '';
+        const blN = FupanScoring.getBlacklist().length;
+        const wlN = FupanScoring.getWhitelist().length;
+        const blTxt = blN ? `黑名单席位${blN}个生效中（净买入触发一票否决）` : '';
+        const wlTxt = wlN ? `白名单席位${wlN}个生效中（净买入加分封顶4.5）` : '';
+        const seatTxt = (blTxt + (blTxt && wlTxt ? '；' : '') + wlTxt);
         if (active && blActive) {
-            configBanner = `<div class="fp-config-banner">自定义阈值生效中（生效于 ${esc(config.effectiveDate)}，本页评分为前端按自定义阈值重算）；${blTxt}</div>`;
+            configBanner = `<div class="fp-config-banner">自定义阈值生效中（生效于 ${esc(config.effectiveDate)}，本页评分为前端按自定义阈值重算）；${seatTxt}</div>`;
         } else if (active) {
             configBanner = `<div class="fp-config-banner">自定义阈值生效中（生效于 ${esc(config.effectiveDate)}，本页评分为前端按自定义阈值重算）</div>`;
         } else if (hasCustom && blActive) {
-            configBanner = `<div class="fp-config-banner fp-config-muted">已配置自定义阈值（生效于 ${esc(config.effectiveDate)}），本日早于生效日，阈值不参与本页重算；${blTxt}</div>`;
+            configBanner = `<div class="fp-config-banner fp-config-muted">已配置自定义阈值（生效于 ${esc(config.effectiveDate)}），本日早于生效日，阈值不参与本页重算；${seatTxt}</div>`;
         } else if (hasCustom) {
             configBanner = `<div class="fp-config-banner fp-config-muted">已配置自定义阈值（生效于 ${esc(config.effectiveDate)}），本日早于生效日，展示采集端原始评分</div>`;
         } else if (blActive) {
-            configBanner = `<div class="fp-config-banner">${blTxt}，本页评分为前端重算</div>`;
+            configBanner = `<div class="fp-config-banner">${seatTxt}，本页评分为前端重算</div>`;
         }
 
         container.innerHTML = `
             ${configBanner}
             <div class="fp-score-toolbar">
                 <button class="fp-cfg-toggle" data-fp-cfg-toggle title="微调当前方案参数（维度权重/一票否决/建议分级）">⚙ 阈值设置</button>
-                <button class="fp-cfg-toggle" data-fp-blacklist-btn title="配置龙虎榜黑名单席位：黑名单席位净买入的股票评分一票否决">🚫 黑名单席位</button>
+                <button class="fp-cfg-toggle" data-fp-blacklist-btn title="配置龙虎榜黑名单席位：黑名单席位净买入的股票评分一票否决">🚫 黑名单${blN ? `(${blN})` : ''}</button>
+                <button class="fp-cfg-toggle" data-fp-whitelist-btn title="TODO25.1：龙虎榜白名单席位净买入加分（硬编码格局席位+用户自定义，封顶4.5）">⭐ 白名单${wlN ? `(${wlN})` : ''}</button>
+                <button class="fp-cfg-toggle" data-fp-dept-btn title="查看龙虎榜营业部数据缓存（当日龙虎榜营业部 + 全量营业部分页）">🏢 营业部</button>
                 <button class="fp-cfg-toggle" data-fp-export title="当前方案参数导出为JSON备份文件到本地">💾 备份导出</button>
                 <button class="fp-cfg-toggle" data-fp-import-btn title="从本地JSON备份文件导入方案参数">📂 导入备份</button>
                 <input type="file" accept=".json,application/json" data-fp-import-file style="display:none">
             </div>
             <div data-fp-cfg-panel style="display:none"></div>
-            <div data-fp-blacklist-panel style="display:none"></div>
+            <!-- TODO26.3：统一龙虎榜席位管理面板（tab切换：黑名单/白名单/营业部），原 data-fp-blacklist-panel 升级 -->
+            <div data-fp-seat-panel style="display:none"></div>
             ${section('预测回溯（模型方案）', `
                 <div data-fp-acc-line><div class="fp-empty">本日预测准确率计算中...</div></div>
                 <div data-fp-scheme-tabs></div>
@@ -1832,10 +1870,13 @@ const FupanRenderer = (function () {
         if (FupanData.getSetting('fupan_score_cfg_open', false)) panel.style.display = '';
         await renderCfgPanel(panel, container, day, dateStr);
 
-        // 黑名单席位管理面板（TODO24.5，展开状态持久化）
-        const blPanel = container.querySelector('[data-fp-blacklist-panel]');
-        if (FupanData.getSetting('fupan_score_bl_open', false)) blPanel.style.display = '';
-        renderBlacklistPanel(blPanel, container, day, dateStr);
+        // TODO26.3：席位管理面板（原 fp-blacklist-panel 升级为 fp-seat-panel tab 面板，展开状态持久化，记忆上次 tab）
+        const seatPanel = container.querySelector('[data-fp-seat-panel]');
+        if (FupanData.getSetting('fupan_score_bl_open', false)) {
+            seatPanel.style.display = '';
+            const lastTab = FupanData.getSetting('fupan_seat_last_tab', 'blacklist');
+            renderSeatPanel(seatPanel, container, day, dateStr, lastTab);
+        }
 
         // 异步1：本日预测准确率（T+1结果已出时显示当时评分的准确率，TODO13.2.1）
         renderDayAccuracy(container.querySelector('[data-fp-acc-line]'), day, dateStr)
@@ -1864,29 +1905,33 @@ const FupanRenderer = (function () {
     }
 
     /**
-     * 绑定评分tab工具栏（阈值设置开关 / 方案备份导出 / 导入备份）
+     * 绑定评分tab工具栏（阈值设置 / 席位管理tab / 方案备份导出 / 导入备份）
+     * TODO26.3：原 fp-blacklist-panel 升级为 tab 式 fp-seat-panel（blacklist/whitelist/departments）
      * @param {HTMLElement} container tab容器
      * @param {Object} day 单日数据
      * @param {string} dateStr 当前交易日
      */
     function bindScoreToolbar(container, day, dateStr) {
-        const panel = container.querySelector('[data-fp-cfg-panel]');
+        const cfgPanel = container.querySelector('[data-fp-cfg-panel]');
+        const seatPanel = container.querySelector('[data-fp-seat-panel]');
         container.querySelector('[data-fp-cfg-toggle]').addEventListener('click', () => {
-            const show = panel.style.display === 'none';
-            panel.style.display = show ? '' : 'none';
+            const show = cfgPanel.style.display === 'none';
+            cfgPanel.style.display = show ? '' : 'none';
             FupanData.setSetting('fupan_score_cfg_open', show);
         });
-        // 黑名单席位面板开关（TODO24.5；展开时收起阈值面板避免叠加）
-        const blPanel = container.querySelector('[data-fp-blacklist-panel]');
-        container.querySelector('[data-fp-blacklist-btn]').addEventListener('click', () => {
-            const show = blPanel.style.display === 'none';
-            blPanel.style.display = show ? '' : 'none';
-            if (show) {
-                panel.style.display = 'none';
-                FupanData.setSetting('fupan_score_cfg_open', false);
-            }
-            FupanData.setSetting('fupan_score_bl_open', show);
-        });
+        /** TODO26.3：席位管理三按钮共用同一 tab 面板，initialTab 控制初始定位 */
+        const openSeatPanel = (initialTab) => {
+            seatPanel.style.display = '';
+            cfgPanel.style.display = 'none';
+            FupanData.setSetting('fupan_score_cfg_open', false);
+            renderSeatPanel(seatPanel, container, day, dateStr, initialTab);
+        };
+        container.querySelector('[data-fp-blacklist-btn]').addEventListener('click',
+            () => openSeatPanel('blacklist'));
+        container.querySelector('[data-fp-whitelist-btn]').addEventListener('click',
+            () => openSeatPanel('whitelist'));
+        container.querySelector('[data-fp-dept-btn]').addEventListener('click',
+            () => openSeatPanel('departments'));
         container.querySelector('[data-fp-export]').addEventListener('click', exportSchemeBackup);
         const fileInput = container.querySelector('[data-fp-import-file]');
         container.querySelector('[data-fp-import-btn]').addEventListener('click', () => fileInput.click());
@@ -2197,12 +2242,13 @@ const FupanRenderer = (function () {
                <div class="fp-top5-row">${top5.map((s, i) => top5Card(s, weights, i, lhbByCode.get(s.code))).join('')}</div>`
             : '<div class="fp-empty">当日无评分标的</div>';
 
-        // 3. 全量评分表（被否决的标的带否决标记；龙虎榜列从ztpool关联）
+        // 3. 全量评分表（TODO26.2 新增板数列；被否决的标的带否决标记；龙虎榜列从ztpool关联）
         const allScores = scores.all || [];
         const allRows = allScores.map(s => `
             <tr>
                 <td>${stockLink(s.code, s.name)}${s.dragon ? ' <span class="fp-dragon-badge" title="高位断板日的1~3板接班候选（板块身位分已加成）">未来龙头</span>' : ''}</td>
                 <td class="col-code">${esc(s.code)}</td>
+                <td>${s.lbCount || 1}</td>
                 <td class="fp-score-total ${scoreClass(s.score)}">${s.score ?? '--'}</td>
                 <td data-v="${s.probability !== null && s.probability !== undefined ? (s.probability * 100).toFixed(1) : ''}">${s.probability !== null && s.probability !== undefined ? (s.probability * 100).toFixed(1) + '%' : '--'}</td>
                 <td data-v="${lhbByCode.has(s.code) && lhbByCode.get(s.code).onList ? (lhbByCode.get(s.code).netBuy || 0) : ''}">${lhbCell(lhbByCode.get(s.code), s.code)}</td>
@@ -2212,7 +2258,7 @@ const FupanRenderer = (function () {
             <h4 class="fp-chart-title">全量评分（${allScores.length}只）</h4>
             <div class="table-wrapper">
                 <table class="stock-table">
-                    <thead><tr><th>名称</th><th>代码</th><th>总分</th><th>晋级概率</th><th title="龙虎榜净买额（亿元）">龙虎榜</th><th>否决</th></tr></thead>
+                    <thead><tr><th>名称</th><th>代码</th><th title="连板数（首板=1）">板数</th><th>总分</th><th>晋级概率</th><th title="龙虎榜净买额（亿元）">龙虎榜</th><th>否决</th></tr></thead>
                     <tbody>${allRows}</tbody>
                 </table>
             </div>` : '<div class="fp-empty">暂无数据</div>';
@@ -2555,22 +2601,23 @@ const FupanRenderer = (function () {
     }
 
     /**
-     * 渲染龙虎榜黑名单席位管理面板（TODO24.5）
-     * 主流程：聚合当日全部上榜席位（按席位去重，净买额排序）→ 当前黑名单标签
-     *        → 搜索过滤 + 手动输入添加 → 席位行点击切换黑名单 → 保存并重算整tab
-     * 黑名单项作为关键词匹配席位名（包含匹配，同砸盘席位库语义）；
-     * 仅前端重算生效（采集端无法读取浏览器配置），保存后当前方案评分重算
+     * 渲染龙虎榜席位管理面板（TODO26.3：原黑名单面板升级为 tab 式，复用相同的席位增删/保存/重算骨架）
+     * 三个 tab：
+     *   blacklist  黑名单席位：净买入触发一票否决（TODO24.5）
+     *   whitelist  白名单席位：净买入加分封顶4.5（TODO25.1）
+     *   departments 营业部缓存：当日龙虎榜营业部 + 全部缓存分页（TODO26.3）
+     * 设计：黑名单/白名单共享 paintSeatTab 骨架（参数化 标签/文案/持久化 key/保存回调），
+     *      departments 独立函数 renderDeptTab（加载 departments.json + 分页 + 子 tab 切换 + 搜索优先当日）。
      * @param {HTMLElement} panel 面板容器
-     * @param {HTMLElement} container tab容器（保存后整tab重渲染）
-     * @param {Object} day 单日数据（聚合当日龙虎榜席位）
-     * @param {string} dateStr 当前交易日（保存后重渲染用）
+     * @param {HTMLElement} container score 根容器（保存后重渲染用）
+     * @param {Object} day 单日复盘数据
+     * @param {string} dateStr 当前交易日
+     * @param {string} initialTab 'blacklist'/'whitelist'/'departments' 初始 tab
      */
-    function renderBlacklistPanel(panel, container, day, dateStr) {
+    function renderSeatPanel(panel, container, day, dateStr, initialTab) {
         if (!panel) return;
-        // 工作副本：面板内的增删先改内存数组，保存时才持久化
-        let blArr = FupanScoring.getBlacklist().slice();
 
-        // 聚合当日全部上榜席位：name → {name, cnt上榜股数, net当日净买合计}
+        // 聚合当日全部上榜席位（黑名单/白名单 tab 共用，departments 不依赖）
         const seatAgg = {};
         (day.ztpool || []).forEach(s => {
             if (!s.lhb || !s.lhb.onList) return;
@@ -2586,128 +2633,302 @@ const FupanRenderer = (function () {
         });
         const seats = Object.keys(seatAgg).map(k => seatAgg[k]).sort((a, b) => b.net - a.net);
 
-        /**
-         * 席位名是否命中黑名单（黑名单项包含于席位名）
-         */
-        const inBl = nm => blArr.some(b => String(nm).includes(b));
-
-        /**
-         * 重绘当日席位列表区（搜索输入时局部重绘，避免输入框整体重建导致焦点丢失）
-         */
-        const paintList = () => {
-            const box = panel.querySelector('[data-fp-seats-box]');
-            if (!box) return;
-            const kw = ((panel.querySelector('[data-fp-bl-search]') || {}).value || '').trim();
-            const list = kw ? seats.filter(s => s.name.includes(kw)) : seats;
-            const rows = list.map(s => {
-                const on = inBl(s.name);
-                const netYi = FupanData.formatYi(s.net);
-                return `
-                    <div class="fp-bl-seat ${on ? 'fp-bl-on' : ''}">
-                        <span class="fp-bl-seat-name" title="当日上榜${s.cnt}只股票">${esc(s.name)}</span>
-                        <span class="fp-bl-seat-net ${s.net >= 0 ? 'change-up' : 'change-down'}">${s.net >= 0 ? '+' : ''}${netYi}亿</span>
-                        <span class="fp-bl-seat-cnt">${s.cnt}股</span>
-                        <button class="fp-scheme-btn" data-fp-bl-seat="${esc(s.name)}">${on ? '移出黑名单' : '加入黑名单'}</button>
-                    </div>`;
-            }).join('');
-            box.innerHTML = rows || '<div class="fp-empty">无匹配席位（当日无龙虎榜数据或搜索无结果）</div>';
-            bindSeatRows();
+        // 三个 tab 的元信息：参数化 paintSeatTab 共用骨架
+        const TAB_META = {
+            blacklist: {
+                title: '龙虎榜黑名单席位管理',
+                hint: '黑名单席位在某股票龙虎榜席位中<b>净买入</b>（净卖出不触发）时，该股票评分一票否决；按关键词匹配（如填"上塘路"可匹配所有含该词的席位）。仅本浏览器前端重算生效',
+                chipsTitle: '当前黑名单',
+                inputPh: '手动输入席位名/关键词',
+                seatsTitle: `当日上榜席位（去重${seats.length}个，按净买额排序；点击右侧按钮加入/移出）`,
+                btnOn: '移出黑名单', btnOff: '加入黑名单',
+                clearConfirm: '确定清空全部黑名单席位？清空后相关股票不再被一票否决',
+                getList: () => FupanScoring.getBlacklist().slice(),
+                saveList: (arr) => { FupanScoring.saveBlacklist(arr); },
+                getCount: () => FupanScoring.getBlacklist().length,
+            },
+            whitelist: {
+                title: '龙虎榜白名单席位管理（TODO25.1）',
+                hint: '白名单席位在某股票龙虎榜席位中<b>净买入</b>时，该股票评分加席位加分（每自定义白名单席位+1.5，与硬编码格局席位加分合并封顶4.5）。仅本浏览器前端重算生效',
+                chipsTitle: '当前白名单',
+                inputPh: '手动输入席位名/关键词',
+                seatsTitle: `当日上榜席位（去重${seats.length}个，按净买额排序；点击右侧按钮加入/移出）`,
+                btnOn: '移出白名单', btnOff: '加入白名单',
+                clearConfirm: '确定清空全部白名单席位？清空后相关股票不再享受席位加分',
+                getList: () => FupanScoring.getWhitelist().slice(),
+                saveList: (arr) => { FupanScoring.saveWhitelist(arr); },
+                getCount: () => FupanScoring.getWhitelist().length,
+            },
         };
 
-        /**
-         * 绑定席位行加入/移出黑名单事件
-         */
-        const bindSeatRows = () => {
-            panel.querySelectorAll('[data-fp-bl-seat]').forEach(el =>
-                el.addEventListener('click', () => {
-                    const nm = el.dataset.fpBlSeat;
-                    if (inBl(nm)) {
-                        // 移出：删除所有能匹配到该席位的黑名单项（可能一个短关键词匹配多个席位）
-                        blArr = blArr.filter(b => !nm.includes(b));
-                    } else if (blArr.indexOf(nm) < 0) {
-                        blArr.push(nm);
-                    }
-                    paint();
-                }));
+        // 面板结构：tab 栏 + 动态内容区
+        panel.innerHTML = `
+            <div class="fp-tab-bar" data-fp-seat-tabbar>
+                <button class="fp-tab${initialTab === 'blacklist' ? ' active' : ''}" data-fp-seat-tab="blacklist">🚫 黑名单${TAB_META.blacklist.getCount() ? `(${TAB_META.blacklist.getCount()})` : ''}</button>
+                <button class="fp-tab${initialTab === 'whitelist' ? ' active' : ''}" data-fp-seat-tab="whitelist">⭐ 白名单${TAB_META.whitelist.getCount() ? `(${TAB_META.whitelist.getCount()})` : ''}</button>
+                <button class="fp-tab${initialTab === 'departments' ? ' active' : ''}" data-fp-seat-tab="departments">🏢 营业部</button>
+            </div>
+            <div data-fp-seat-content></div>`;
+
+        const contentBox = panel.querySelector('[data-fp-seat-content]');
+        const tabBar = panel.querySelector('[data-fp-seat-tabbar]');
+
+        // tab 切换
+        const switchTab = (tab) => {
+            FupanData.setSetting('fupan_seat_last_tab', tab);
+            tabBar.querySelectorAll('[data-fp-seat-tab]').forEach(b =>
+                b.classList.toggle('active', b.dataset.fpSeatTab === tab));
+            if (tab === 'departments') {
+                renderDeptTab(contentBox, seats);
+            } else {
+                paintSeatTab(contentBox, tab);
+            }
         };
+        tabBar.querySelectorAll('[data-fp-seat-tab]').forEach(b =>
+            b.addEventListener('click', () => switchTab(b.dataset.fpSeatTab)));
+
+        // 初始化渲染
+        switchTab(initialTab);
 
         /**
-         * 重绘面板内容（列表区/黑名单区随工作副本联动；搜索词保留不重置）
+         * 渲染黑名单/白名单 tab（共享骨架，meta 参数化差异点）
          */
-        const paint = () => {
-            const kw = ((panel.querySelector('[data-fp-bl-search]') || {}).value || '').trim();
-            const list = kw ? seats.filter(s => s.name.includes(kw)) : seats;
-            const blChips = blArr.length
-                ? blArr.map(b => `<span class="fp-bl-chip" title="${esc(b)}（点击移除）" data-fp-bl-remove="${esc(b)}">${esc(b)} ✕</span>`).join('')
-                : '<span class="fp-lhb-off">暂无黑名单席位</span>';
-            const rows = list.map(s => {
-                const on = inBl(s.name);
-                const netYi = FupanData.formatYi(s.net);
-                return `
-                    <div class="fp-bl-seat ${on ? 'fp-bl-on' : ''}">
-                        <span class="fp-bl-seat-name" title="当日上榜${s.cnt}只股票">${esc(s.name)}</span>
-                        <span class="fp-bl-seat-net ${s.net >= 0 ? 'change-up' : 'change-down'}">${s.net >= 0 ? '+' : ''}${netYi}亿</span>
-                        <span class="fp-bl-seat-cnt">${s.cnt}股</span>
-                        <button class="fp-scheme-btn" data-fp-bl-seat="${esc(s.name)}">${on ? '移出黑名单' : '加入黑名单'}</button>
-                    </div>`;
-            }).join('');
-            panel.innerHTML = `
-                <div class="fp-cfg-head">
-                    <span class="fp-cfg-title">龙虎榜黑名单席位管理</span>
-                    <span class="fp-cfg-hint">黑名单席位在某股票龙虎榜席位中<b>净买入</b>（净卖出不触发）时，该股票评分一票否决；黑名单项按关键词匹配席位名（如填"上塘路"可匹配所有含该词的席位）。仅本浏览器前端重算生效，采集端落盘评分不变</span>
-                </div>
-                <div class="fp-cfg-group">当前黑名单（${blArr.length}项，点击✕移除）</div>
-                <div class="fp-bl-chips">${blChips}</div>
-                <div class="fp-cfg-grid">
-                    <input type="text" class="fp-bl-input" data-fp-bl-input placeholder="手动输入席位名/关键词（历史席位或短关键词）">
-                    <button class="btn btn-secondary btn-sm" data-fp-bl-add>添加</button>
-                </div>
-                <div class="fp-cfg-group">当日上榜席位（去重${seats.length}个，按净买额排序；点击右侧按钮加入/移出）</div>
-                <div class="fp-cfg-grid">
-                    <input type="text" class="fp-bl-input" data-fp-bl-search placeholder="搜索席位名过滤…" value="${esc(kw)}">
-                </div>
-                <div class="fp-bl-seats" data-fp-seats-box>${rows || '<div class="fp-empty">无匹配席位（当日无龙虎榜数据或搜索无结果）</div>'}</div>
-                <div class="fp-cfg-actions">
-                    <button class="btn btn-primary" data-fp-bl-save>保存并重算</button>
-                    <button class="btn btn-secondary" data-fp-bl-clear>清空黑名单</button>
-                </div>`;
+        function paintSeatTab(box, key) {
+            const meta = TAB_META[key];
+            // 工作副本：面板内的增删先改内存数组，保存时才持久化
+            let arr = meta.getList();
 
-            // 黑名单标签移除
-            panel.querySelectorAll('[data-fp-bl-remove]').forEach(el =>
-                el.addEventListener('click', () => {
-                    blArr = blArr.filter(b => b !== el.dataset.fpBlRemove);
+            const inArr = nm => arr.some(b => String(nm).includes(b));
+
+            const paint = () => {
+                const kw = ((box.querySelector('[data-fp-seat-search]') || {}).value || '').trim();
+                const list = kw ? seats.filter(s => s.name.includes(kw)) : seats;
+                const chips = arr.length
+                    ? arr.map(b => `<span class="fp-bl-chip" title="${esc(b)}（点击移除）" data-fp-bl-remove="${esc(b)}">${esc(b)} ✕</span>`).join('')
+                    : `<span class="fp-lhb-off">暂无${key === 'blacklist' ? '黑' : '白'}名单席位</span>`;
+                const rows = list.map(s => {
+                    const on = inArr(s.name);
+                    const netYi = FupanData.formatYi(s.net);
+                    return `
+                        <div class="fp-bl-seat ${on ? 'fp-bl-on' : ''}">
+                            <span class="fp-bl-seat-name" title="当日上榜${s.cnt}只股票">${esc(s.name)}</span>
+                            <span class="fp-bl-seat-net ${s.net >= 0 ? 'change-up' : 'change-down'}">${s.net >= 0 ? '+' : ''}${netYi}亿</span>
+                            <span class="fp-bl-seat-cnt">${s.cnt}股</span>
+                            <button class="fp-scheme-btn" data-fp-bl-seat="${esc(s.name)}">${on ? meta.btnOn : meta.btnOff}</button>
+                        </div>`;
+                }).join('');
+                box.innerHTML = `
+                    <div class="fp-cfg-head">
+                        <span class="fp-cfg-title">${meta.title}</span>
+                        <span class="fp-cfg-hint">${meta.hint}</span>
+                    </div>
+                    <div class="fp-cfg-group">${meta.chipsTitle}（${arr.length}项，点击✕移除）</div>
+                    <div class="fp-bl-chips">${chips}</div>
+                    <div class="fp-cfg-grid">
+                        <input type="text" class="fp-bl-input" data-fp-bl-input placeholder="${meta.inputPh}">
+                        <button class="btn btn-secondary btn-sm" data-fp-bl-add>添加</button>
+                    </div>
+                    <div class="fp-cfg-group">${meta.seatsTitle}</div>
+                    <div class="fp-cfg-grid">
+                        <input type="text" class="fp-bl-input" data-fp-seat-search placeholder="搜索席位名过滤…">
+                    </div>
+                    <div class="fp-bl-seats" data-fp-seats-box>${rows || '<div class="fp-empty">无匹配席位</div>'}</div>
+                    <div class="fp-cfg-actions">
+                        <button class="btn btn-primary" data-fp-bl-save>保存并重算</button>
+                        <button class="btn btn-secondary" data-fp-bl-clear>清空${key === 'blacklist' ? '黑' : '白'}名单</button>
+                    </div>`;
+
+                // chips 移除
+                box.querySelectorAll('[data-fp-bl-remove]').forEach(el =>
+                    el.addEventListener('click', () => {
+                        arr = arr.filter(b => b !== el.dataset.fpBlRemove);
+                        paint();
+                    }));
+                // 席位行按钮切换
+                box.querySelectorAll('[data-fp-bl-seat]').forEach(el =>
+                    el.addEventListener('click', () => {
+                        const nm = el.dataset.fpBlSeat;
+                        if (inArr(nm)) {
+                            arr = arr.filter(b => !nm.includes(b));
+                        } else if (arr.indexOf(nm) < 0) {
+                            arr.push(nm);
+                        }
+                        paint();
+                    }));
+                // 手动输入添加
+                const doAdd = () => {
+                    const inp = box.querySelector('[data-fp-bl-input]');
+                    const v = String(inp.value || '').trim();
+                    if (!v) return;
+                    if (arr.indexOf(v) < 0) arr.push(v);
                     paint();
-                }));
-            bindSeatRows();
-            // 手动输入添加（回车/按钮均可）
-            const doAdd = () => {
-                const inp = panel.querySelector('[data-fp-bl-input]');
-                const v = String(inp.value || '').trim();
-                if (!v) return;
-                if (blArr.indexOf(v) < 0) blArr.push(v);
-                paint();
+                };
+                box.querySelector('[data-fp-bl-add]').addEventListener('click', doAdd);
+                box.querySelector('[data-fp-bl-input]').addEventListener('keydown', e => {
+                    if (e.key === 'Enter') doAdd();
+                });
+                // 搜索过滤
+                box.querySelector('[data-fp-seat-search]').addEventListener('input', paint);
+                // 保存并重算
+                box.querySelector('[data-fp-bl-save]').addEventListener('click', () => {
+                    meta.saveList(arr);
+                    FupanData.setSetting('fupan_score_bl_open', false);
+                    renderScore(container, day, dateStr);
+                });
+                // 清空
+                box.querySelector('[data-fp-bl-clear]').addEventListener('click', () => {
+                    if (!arr.length) return;
+                    if (!window.confirm(meta.clearConfirm)) return;
+                    arr = [];
+                    paint();
+                });
             };
-            panel.querySelector('[data-fp-bl-add]').addEventListener('click', doAdd);
-            panel.querySelector('[data-fp-bl-input]').addEventListener('keydown', e => {
-                if (e.key === 'Enter') doAdd();
-            });
-            // 搜索过滤（局部重绘列表区，保留输入焦点）
-            panel.querySelector('[data-fp-bl-search]').addEventListener('input', paintList);
-            // 保存并重算：去重持久化 → 收起面板 → 整tab重渲染（评分应用黑名单否决）
-            panel.querySelector('[data-fp-bl-save]').addEventListener('click', () => {
-                FupanScoring.saveBlacklist(blArr);
-                FupanData.setSetting('fupan_score_bl_open', false);
-                renderScore(container, day, dateStr);
-            });
-            // 清空黑名单（需确认；清空后黑名单否决不再触发）
-            panel.querySelector('[data-fp-bl-clear]').addEventListener('click', () => {
-                if (!blArr.length) return;
-                if (!window.confirm('确定清空全部黑名单席位？清空后相关股票不再被一票否决')) return;
-                blArr = [];
-                paint();
-            });
-        };
-        paint();
+            paint();
+        }
+
+        /**
+         * 渲染营业部缓存 tab（TODO26.3）
+         * 子 tab：今日龙虎榜营业部 / 全部缓存（departments.json 分页）
+         * 搜索优先从今日找，没找到在全部缓存里找
+         */
+        async function renderDeptTab(box, todaySeats) {
+            const PAGE_SIZE = 30;
+            let depts = null;     // 全缓存（departments.json 里的 depts 数组）
+            let deptPage = 0;     // 当前页（从0起）
+            let todayDeptTab = 'today';  // 'today' / 'all'
+            let kw = '';
+
+            box.innerHTML = `<div class="fp-empty">营业部缓存加载中...</div>`;
+
+            // 加载 departments.json
+            try {
+                const resp = await fetch('data/fupan/departments.json?_=' + Date.now());
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const obj = await resp.json();
+                depts = (obj && obj.depts) || [];
+            } catch (e) {
+                depts = [];  // 无缓存时空数组，仍显示今日龙虎榜
+            }
+
+            const buildSeatRows = (list, fromCache) => list.map(s => {
+                const name = s.name || s;
+                const code = s.code || '';
+                const netYi = FupanData.formatYi((fromCache ? s.amount : s.net) || 0);
+                const amountCls = (fromCache ? (s.amount >= 0) : (s.net >= 0)) ? 'change-up' : 'change-down';
+                return `
+                    <div class="fp-bl-seat">
+                        <span class="fp-bl-seat-name" title="${esc(name)}${code ? '（code=' + code + '）' : ''}">${esc(name)}</span>
+                        <span class="fp-bl-seat-net ${amountCls}">${fromCache ? '累计' : '今日'} ${netYi}亿</span>
+                        ${fromCache ? '' : `<span class="fp-bl-seat-cnt">${s.cnt}股</span>`}
+                    </div>`;
+            }).join('');
+
+            const paint = () => {
+                const allCount = (depts || []).length;
+                const tabHtml = `
+                    <div class="fp-sub-tab-bar">
+                        <button class="fp-sub-tab${todayDeptTab === 'today' ? ' active' : ''}" data-fp-dept-sub="today">今日龙虎榜营业部（${todaySeats.length}个）</button>
+                        <button class="fp-sub-tab${todayDeptTab === 'all' ? ' active' : ''}" data-fp-dept-sub="all">全部缓存（${allCount}个）</button>
+                    </div>`;
+                const sub = todayDeptTab === 'today'
+                    ? paintToday()
+                    : paintAll();
+                box.innerHTML = `
+                    <div class="fp-cfg-head">
+                        <span class="fp-cfg-title">龙虎榜营业部数据缓存（TODO26.3）</span>
+                        <span class="fp-cfg-hint">后端 GitHub Actions 每月定时从东财 RPT_OPERATEDEPT_LIST_STATISTICS 接口采集并推送 public 仓库 data/fupan/departments.json；前端加载后分页展示，搜索优先命中今日龙虎榜营业部</span>
+                    </div>
+                    <div class="fp-cfg-grid">
+                        <input type="text" class="fp-bl-input" data-fp-dept-search placeholder="搜索营业部名优先今日、未命中再全缓存…" value="${esc(kw)}">
+                    </div>
+                    ${tabHtml}
+                    <div data-fp-dept-body>${sub}</div>`;
+
+                // 子 tab 切换
+                box.querySelectorAll('[data-fp-dept-sub]').forEach(b =>
+                    b.addEventListener('click', () => {
+                        todayDeptTab = b.dataset.fpDeptSub;
+                        deptPage = 0;
+                        paint();
+                    }));
+                // 搜索实时过滤
+                box.querySelector('[data-fp-dept-search]').addEventListener('input', e => {
+                    kw = e.target.value.trim();
+                    deptPage = 0;
+                    paint();
+                });
+            };
+
+            function paintToday() {
+                const filtered = kw
+                    ? todaySeats.filter(s => s.name.includes(kw))
+                    : todaySeats;
+                return `<div class="fp-bl-seats">${filtered.length
+                    ? buildSeatRows(filtered, false)
+                    : `<div class="fp-empty">${kw ? '今日龙虎榜营业部无匹配，可切"全部缓存"继续搜' : '当日无龙虎榜上榜营业部'}</div>`}</div>`;
+            }
+
+            function paintAll() {
+                if (!depts || !depts.length) {
+                    return `<div class="fp-empty">本地无 departments.json 缓存，请等待 CI 每月定时采集推送（或首次采集需要 GitHub Actions 手动 dispatch）</div>`;
+                }
+                const filtered = kw
+                    ? depts.filter(s => (s.name || '').includes(kw))
+                    : depts;
+                const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+                if (deptPage >= totalPages) deptPage = totalPages - 1;
+                const slice = filtered.slice(deptPage * PAGE_SIZE, (deptPage + 1) * PAGE_SIZE);
+                const pager = totalPages > 1 ? `
+                    <div class="fp-pager">
+                        <button class="btn btn-sm" data-fp-dept-prev ${deptPage === 0 ? 'disabled' : ''}>上一页</button>
+                        <span class="fp-pager-info">${deptPage + 1}/${totalPages} 共${filtered.length}个</span>
+                        <button class="btn btn-sm" data-fp-dept-next ${deptPage >= totalPages - 1 ? 'disabled' : ''}>下一页</button>
+                    </div>` : '';
+                const body = `<div class="fp-bl-seats">${slice.length
+                    ? buildSeatRows(slice, true)
+                    : `<div class="fp-empty">无匹配营业部</div>`}</div>`;
+                const wrap = `<div data-fp-dept-wrap>${body}${pager}</div>`;
+                // 翻页事件需在 paint 绑定
+                setTimeout(() => {
+                    const wrapEl = box.querySelector('[data-fp-dept-wrap]');
+                    if (wrapEl) {
+                        wrapEl.querySelectorAll('[data-fp-dept-prev]').forEach(b =>
+                            b.addEventListener('click', () => { deptPage--; paintAllRefresh(); }));
+                        wrapEl.querySelectorAll('[data-fp-dept-next]').forEach(b =>
+                            b.addEventListener('click', () => { deptPage++; paintAllRefresh(); }));
+                    }
+                }, 0);
+                return wrap;
+            }
+            // 分页刷新（只替换 body 区，保留搜索词与子 tab）
+            function paintAllRefresh() {
+                const bodyBox = box.querySelector('[data-fp-dept-body]');
+                if (!bodyBox) return paint();  // fallback
+                const filtered = kw
+                    ? depts.filter(s => (s.name || '').includes(kw))
+                    : depts;
+                const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+                if (deptPage >= totalPages) deptPage = totalPages - 1;
+                const slice = filtered.slice(deptPage * PAGE_SIZE, (deptPage + 1) * PAGE_SIZE);
+                const pager = totalPages > 1 ? `
+                    <div class="fp-pager">
+                        <button class="btn btn-sm" data-fp-dept-prev ${deptPage === 0 ? 'disabled' : ''}>上一页</button>
+                        <span class="fp-pager-info">${deptPage + 1}/${totalPages} 共${filtered.length}个</span>
+                        <button class="btn btn-sm" data-fp-dept-next ${deptPage >= totalPages - 1 ? 'disabled' : ''}>下一页</button>
+                    </div>` : '';
+                bodyBox.innerHTML = `<div class="fp-bl-seats">${slice.length
+                    ? buildSeatRows(slice, true)
+                    : `<div class="fp-empty">无匹配营业部</div>`}</div>${pager}`;
+                setTimeout(() => {
+                    box.querySelectorAll('[data-fp-dept-prev]').forEach(b =>
+                        b.addEventListener('click', () => { deptPage--; paintAllRefresh(); }));
+                    box.querySelectorAll('[data-fp-dept-next]').forEach(b =>
+                        b.addEventListener('click', () => { deptPage++; paintAllRefresh(); }));
+                }, 0);
+            }
+
+            paint();
+        }
     }
 
     /**

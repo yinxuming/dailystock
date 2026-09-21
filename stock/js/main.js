@@ -144,6 +144,27 @@ const App = (function () {
     }
 
     /**
+     * TODO27.1：批量移除自定义监控（关注异动 sub tab 多选后"批量移除"按钮触发）
+     * 一次确认，一次持久化，一次重渲染（比逐只删高效）
+     * @param {string[]} codes - 股票代码数组
+     */
+    function removeCustomMonitorBatch(codes) {
+        if (!codes || !codes.length) return 0;
+        const list = getCustomMonitors();
+        const before = list.length;
+        // 一次确认（批量时比逐只 confirm 高效）
+        const matches = list.filter(s => codes.includes(s.code));
+        if (!matches.length) return 0;
+        if (!confirm(`确定批量移除 ${matches.length} 只关注异动股票？\n`
+            + matches.map(s => `  · ${s.name}（${s.code}）`).join('\n'))) return 0;
+        const newList = list.filter(s => !codes.includes(s.code));
+        saveCustomMonitors(newList);
+        StockAPI.clearResultCache();
+        rerunAfterCustomChange();
+        return before - newList.length;
+    }
+
+    /**
      * 自定义监控增删后重新分析渲染（运行中则等本轮结束后补跑）
      */
     function rerunAfterCustomChange() {
@@ -1041,6 +1062,7 @@ const App = (function () {
         run,
         // 关注异动监控（renderer操作列移除按钮转发）
         removeCustomMonitor,
+        removeCustomMonitorBatch,
         // TODO16.1：自选列表"查询异动"列入口（跳转个股异动空间=市场行情页关注异动tab）
         showStockUnusual
     };

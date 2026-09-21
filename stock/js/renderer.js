@@ -56,14 +56,16 @@ const Renderer = (function () {
     /**
      * 根据触发值和可触发性获取CSS类名
      * 颜色阈值基于涨停幅度：danger < 50%涨停, warning < 涨停, normal >= 涨停
+     * TODO27.2：不再按 achievable 分支——不可触发时也按值大小分档显示正常颜色（仅 title 提示），
+     *          原 trigger-impossible 类置灰效果（color:#334155石板灰）让用户看不清关键数字
      * @param {number} value - 触发值百分比
-     * @param {boolean} achievable - 是否可触发
+     * @param {boolean} achievable - 是否可触发（仅用于title提示，不再影响颜色）
      * @param {number} limitUpRate - 涨停幅度（如0.10, 0.20）
      */
     function getTriggerClass(value, achievable, limitUpRate) {
         if (value === null) return 'trigger-normal';
         if (value === 0) return 'trigger-triggered';
-        if (!achievable) return 'trigger-impossible';
+        // TODO27.2：不按 achievable 分支，直接按值大小分档显示正常颜色
         const limitUp = (limitUpRate || 0.10) * 100; // 默认10%
         if (value < limitUp * 0.5) return 'trigger-danger';   // < 50%涨停幅度
         if (value < limitUp) return 'trigger-warning';         // < 涨停幅度
@@ -289,10 +291,69 @@ const Renderer = (function () {
             elements.loading.style.display = 'none';
             elements.error.style.display = 'none';
 
+            // TODO27.1：批量移除工具栏（关注异动 sub tab 时显示；onCustomRemoveBatch 存在且有 isCustom 行）
+            // 放在 tableSection 顶部；每次 renderTable 重建，避免状态残留
+            const BATCH_ID = 'customBatchBar';
+            let batchBar = document.getElementById(BATCH_ID);
+            if (batchBar) batchBar.remove();
+            const hasCustom = analysisResults.some(r => r.isCustom);
+            if (options.onCustomRemoveBatch && hasCustom) {
+                batchBar = document.createElement('div');
+                batchBar.id = BATCH_ID;
+                batchBar.className = 'fp-batch-bar';
+                batchBar.innerHTML = `
+                    <span class="fp-batch-info">已选 <b class="fp-batch-count">0</b> 只（仅关注异动行可勾选）</span>
+                    <button class="btn btn-danger btn-sm" data-batch-remove disabled>批量移除</button>
+                    <button class="btn btn-secondary btn-sm" data-batch-clear>清空勾选</button>`;
+                elements.tableSection.insertBefore(batchBar, elements.table);
+            } else if (batchBar) {
+                batchBar.remove();
+            }
+
             // 更新表头日期（优先使用targetDate，否则用K线日期）
             const headerBaseDate = targetDate || (analysisResults.length > 0 ? analysisResults[0].date : null);
             if (headerBaseDate) {
                 updateTableHeaders(headerBaseDate, forwardDays);
+            }
+            // TODO27.1：表头第一列插 checkbox th（全选；仅批量模式存在时）
+            if (batchBar) {
+                const tr = elements.table.querySelector('thead tr');
+                if (tr && !tr.querySelector('th.col-check')) {
+                    const th = document.createElement('th');
+                    th.className = 'col-check';
+                    th.innerHTML = '<input type="checkbox" data-batch-all title="全选关注异动行">';
+                    tr.insertBefore(th, tr.firstChild);
+                    batchBar.querySelector('[data-batch-all]').addEventListener('change', e => {
+                        const checked = e.target.checked;
+                        elements.table.querySelectorAll('tbody td.col-check input[type=checkbox]').forEach(cb => {
+                            if (!cb.disabled) cb.checked = checked;
+                        });
+                        updateBatchBar();
+                    });
+                    batchBar.querySelector('[data-batch-remove]').addEventListener('click', () => {
+                        const codes = getSelectedCodes();
+                        if (!codes.length) return;
+                        if (!window.confirm(`确定移除 ${codes.length} 只关注异动股票？`)) return;
+                        options.onCustomRemoveBatch(codes);
+                    });
+                    batchBar.querySelector('[data-batch-clear]').addEventListener('click', () => {
+                        elements.table.querySelectorAll('tbody td.col-check input[type=checkbox]').forEach(cb => cb.checked = false);
+                        const allCb = batchBar.querySelector('[data-batch-all]');
+                        if (allCb) allCb.checked = false;
+                        updateBatchBar();
+                    });
+                }
+            }
+            // 辅助：收集当前选中的自定义股票 code
+            function getSelectedCodes() {
+                const cbs = elements.table.querySelectorAll('tbody td.col-check input[type=checkbox]:checked:not(:disabled)');
+                return Array.from(cbs).map(cb => cb.dataset.code);
+            }
+            function updateBatchBar() {
+                if (!batchBar) return;
+                const codes = getSelectedCodes();
+                batchBar.querySelector('.fp-batch-count').textContent = codes.length;
+                batchBar.querySelector('[data-batch-remove]').disabled = codes.length === 0;
             }
 
             // 更新统计概览
@@ -349,6 +410,24 @@ const Renderer = (function () {
                 // 获取板块信息（用于颜色区分）
                 const boardType = getBoardType(result.code);
                 const boardClass = getBoardClass(boardType);
+
+                // TODO27.1：checkbox 多选列（仅 isCustom 可勾选；marketSub='all' 时 disabled 置灰提示）
+                if (batchBar) {
+                    const tdCheck = document.createElement('td');
+                    tdCheck.className = 'col-check';
+                    const cb = document.createElement('input');
+                    cb.type = 'checkbox';
+                    cb.dataset.code = result.code;
+                    if (!result.isCustom) {
+                        cb.disabled = true;
+                        cb.title = '市场异动 tab 不可勾选，切到"关注异动"可多选移除';
+                    } else {
+                        cb.title = '勾选后批量移除';
+                        cb.addEventListener('change', updateBatchBar);
+                    }
+                    tdCheck.appendChild(cb);
+                    tr.appendChild(tdCheck);
+                }
 
                 // 排名
                 const tdRank = document.createElement('td');
@@ -532,6 +611,12 @@ const Renderer = (function () {
         onCustomRemove: (code) => {
             if (typeof App !== 'undefined' && App.removeCustomMonitor) {
                 App.removeCustomMonitor(code);
+            }
+        },
+        // TODO27.1：批量移除回调（关注异动多选）
+        onCustomRemoveBatch: (codes) => {
+            if (typeof App !== 'undefined' && App.removeCustomMonitorBatch) {
+                App.removeCustomMonitorBatch(codes);
             }
         }
     });
