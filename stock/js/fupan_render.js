@@ -2248,7 +2248,7 @@ const FupanRenderer = (function () {
             <tr>
                 <td>${stockLink(s.code, s.name)}${s.dragon ? ' <span class="fp-dragon-badge" title="高位断板日的1~3板接班候选（板块身位分已加成）">未来龙头</span>' : ''}</td>
                 <td class="col-code">${esc(s.code)}</td>
-                <td>${s.lbCount || 1}</td>
+                <td>${s.lbCount}</td>
                 <td class="fp-score-total ${scoreClass(s.score)}">${s.score ?? '--'}</td>
                 <td data-v="${s.probability !== null && s.probability !== undefined ? (s.probability * 100).toFixed(1) : ''}">${s.probability !== null && s.probability !== undefined ? (s.probability * 100).toFixed(1) + '%' : '--'}</td>
                 <td data-v="${lhbByCode.has(s.code) && lhbByCode.get(s.code).onList ? (lhbByCode.get(s.code).netBuy || 0) : ''}">${lhbCell(lhbByCode.get(s.code), s.code)}</td>
@@ -2258,7 +2258,7 @@ const FupanRenderer = (function () {
             <h4 class="fp-chart-title">全量评分（${allScores.length}只）</h4>
             <div class="table-wrapper">
                 <table class="stock-table">
-                    <thead><tr><th>名称</th><th>代码</th><th title="连板数（首板=1）">板数</th><th>总分</th><th>晋级概率</th><th title="龙虎榜净买额（亿元）">龙虎榜</th><th>否决</th></tr></thead>
+                    <thead><tr><th>名称</th><th>代码</th><th title="连板天数（首板=1）">连板</th><th>总分</th><th>晋级概率</th><th title="龙虎榜净买额（亿元）">龙虎榜</th><th>否决</th></tr></thead>
                     <tbody>${allRows}</tbody>
                 </table>
             </div>` : '<div class="fp-empty">暂无数据</div>';

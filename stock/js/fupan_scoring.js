@@ -601,7 +601,8 @@ const FupanScoring = (function () {
             top5: ranked.top5,
             vetoed: ranked.vetoed,
             all: scored.map(x => ({
-                code: x.code, name: x.name, score: x.score.total,
+                code: x.code, name: x.name, lbCount: x.lbCount,
+                score: x.score.total,
                 probability: x.probability, dragon: x.dragon, veto: x.score.veto
             }))
         };
