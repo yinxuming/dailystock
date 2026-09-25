@@ -201,10 +201,13 @@ const Renderer = (function () {
         }
 
         /** 显示加载状态 */
-        function showLoading(text = '正在加载数据...') {
-            elements.loading.style.display = 'flex';
+        function showLoading(text = '正在加载数据...', keepTable = false) {
             elements.loadingText.textContent = text;
             elements.error.style.display = 'none';
+            // TODO30.1：占位表格已渲染时（keepTable=true）只更新进度文案备用，
+            // 不切回loading视图覆盖占位行
+            if (keepTable) return;
+            elements.loading.style.display = 'flex';
             elements.tableSection.style.display = 'none';
         }
 
@@ -291,11 +294,16 @@ const Renderer = (function () {
             elements.loading.style.display = 'none';
             elements.error.style.display = 'none';
 
-            // TODO27.1：批量移除工具栏（关注异动 sub tab 时显示；onCustomRemoveBatch 存在且有 isCustom 行）
-            // 放在 tableSection 顶部；每次 renderTable 重建，避免状态残留
+            // TODO30.4修复：每次渲染先移除旧批量工具栏与checkbox表头列，
+            // 再按需重建（旧实现切换tab后残留th.col-check：行无该列导致错位，
+            // 且th上的全选事件闭包引用已销毁的旧batchBar导致全选失效）
             const BATCH_ID = 'customBatchBar';
             let batchBar = document.getElementById(BATCH_ID);
             if (batchBar) batchBar.remove();
+            const oldCheckTh = elements.table.querySelector('thead tr th.col-check');
+            if (oldCheckTh) oldCheckTh.remove();
+
+            // TODO27.1：批量移除工具栏（关注异动 sub tab 时显示；onCustomRemoveBatch 存在且有 isCustom 行）
             const hasCustom = analysisResults.some(r => r.isCustom);
             if (options.onCustomRemoveBatch && hasCustom) {
                 batchBar = document.createElement('div');
@@ -305,9 +313,10 @@ const Renderer = (function () {
                     <span class="fp-batch-info">已选 <b class="fp-batch-count">0</b> 只（仅关注异动行可勾选）</span>
                     <button class="btn btn-danger btn-sm" data-batch-remove disabled>批量移除</button>
                     <button class="btn btn-secondary btn-sm" data-batch-clear>清空勾选</button>`;
-                elements.tableSection.insertBefore(batchBar, elements.table);
-            } else if (batchBar) {
-                batchBar.remove();
+                // TODO30.4根因修复：stockTable 的父节点是 .table-wrapper 而非 tableSection，
+                // 旧代码 tableSection.insertBefore(bar, table) 必抛
+                // "insertBefore...is not a child of this node"（切关注异动tab即触发，整页数据加载失败）
+                elements.table.parentNode.insertBefore(batchBar, elements.table);
             }
 
             // 更新表头日期（优先使用targetDate，否则用K线日期）
@@ -315,10 +324,10 @@ const Renderer = (function () {
             if (headerBaseDate) {
                 updateTableHeaders(headerBaseDate, forwardDays);
             }
-            // TODO27.1：表头第一列插 checkbox th（全选；仅批量模式存在时）
+            // TODO27.1：表头第一列插 checkbox th（全选；仅批量模式存在时；每次渲染重建并绑定新batchBar）
             if (batchBar) {
                 const tr = elements.table.querySelector('thead tr');
-                if (tr && !tr.querySelector('th.col-check')) {
+                if (tr) {
                     const th = document.createElement('th');
                     th.className = 'col-check';
                     th.innerHTML = '<input type="checkbox" data-batch-all title="全选关注异动行">';
@@ -472,12 +481,12 @@ const Renderer = (function () {
                 tdChange.textContent = formatChange(result.changePercent);
                 tr.appendChild(tdChange);
 
-                // 异动类型标签
+                // 异动类型标签（TODO30.1：占位行显示"计算中"灰标签，数据就绪后由全量渲染覆盖）
                 const tdTag = document.createElement('td');
                 tdTag.className = 'col-tag';
                 const badge = document.createElement('span');
-                badge.className = 'tag-badge ' + dominantRule.tagClass;
-                badge.textContent = dominantRule.ruleName;
+                badge.className = 'tag-badge ' + (result.__pending ? 'tag-pending' : dominantRule.tagClass);
+                badge.textContent = result.__pending ? '计算中' : dominantRule.ruleName;
                 tdTag.appendChild(badge);
                 tr.appendChild(tdTag);
 
@@ -487,10 +496,12 @@ const Renderer = (function () {
                 tdDeviation.textContent = formatDeviation(dominantRule.currentGain, dominantRule.trendDays);
                 tr.appendChild(tdDeviation);
 
-                // 是否触发
+                // 是否触发（TODO30.1：占位行显示"计算中"）
                 const tdTriggered = document.createElement('td');
                 tdTriggered.className = 'col-triggered';
-                if (dominantRule.triggered) {
+                if (result.__pending) {
+                    tdTriggered.innerHTML = '<span class="tag-triggered-pending">计算中</span>';
+                } else if (dominantRule.triggered) {
                     tdTriggered.innerHTML = '<span class="tag-triggered-yes">已触发</span>';
                 } else {
                     tdTriggered.innerHTML = '<span class="tag-triggered-no">未触发</span>';
@@ -565,6 +576,10 @@ const Renderer = (function () {
             elements.tableSection.style.display = 'block';
             elements.loading.style.display = 'none';
             elements.error.style.display = 'none';
+
+            // TODO30.4修复：空态时清掉残留的checkbox表头列（否则表头多一列与colSpan错位）
+            const checkTh = elements.table.querySelector('thead tr th.col-check');
+            if (checkTh) checkTh.remove();
 
             elements.tableBody.innerHTML = '';
             const tr = document.createElement('tr');

@@ -2606,8 +2606,11 @@ const FupanRenderer = (function () {
      *   blacklist  黑名单席位：净买入触发一票否决（TODO24.5）
      *   whitelist  白名单席位：净买入加分封顶4.5（TODO25.1）
      *   departments 营业部缓存：当日龙虎榜营业部 + 全部缓存分页（TODO26.3）
-     * 设计：黑名单/白名单共享 paintSeatTab 骨架（参数化 标签/文案/持久化 key/保存回调），
-     *      departments 独立函数 renderDeptTab（加载 departments.json + 分页 + 子 tab 切换 + 搜索优先当日）。
+     * TODO29 优化（2026-09-25）：
+     *   29.1/29.3 搜索改为"body 区局部重绘"——input 事件不再整块 innerHTML（旧实现每次击键销毁
+     *          输入框：丢焦点/丢文字/IME中断，搜索基本不可用），只替换列表区并保留输入框 DOM
+     *   29.2 营业部行内一键 加黑名单/加白名单（即时持久化+tab计数即时刷新+可再点移出）
+     *   29.4 营业部自定义备注（localStorage fupan_dept_notes），列表显示 (备注)+名称，✎编辑
      * @param {HTMLElement} panel 面板容器
      * @param {HTMLElement} container score 根容器（保存后重渲染用）
      * @param {Object} day 单日复盘数据
@@ -2632,6 +2635,17 @@ const FupanRenderer = (function () {
             });
         });
         const seats = Object.keys(seatAgg).map(k => seatAgg[k]).sort((a, b) => b.net - a.net);
+
+        /**
+         * TODO29.4：营业部名显示（有备注显示 (备注)+名称；title 保留完整名便于复制）
+         * 黑/白名单"当日上榜席位"与营业部tab两处列表共用
+         */
+        const deptNameHtml = (name) => {
+            const note = FupanScoring.getDeptNotes()[name];
+            return note
+                ? `<span class="fp-dept-note" title="备注：${esc(note)}">(${esc(note)})</span>${esc(name)}`
+                : esc(name);
+        };
 
         // 三个 tab 的元信息：参数化 paintSeatTab 共用骨架
         const TAB_META = {
@@ -2673,6 +2687,16 @@ const FupanRenderer = (function () {
         const contentBox = panel.querySelector('[data-fp-seat-content]');
         const tabBar = panel.querySelector('[data-fp-seat-tabbar]');
 
+        /** TODO29.2：黑/白名单计数变化后刷新 tab 栏按钮文案（营业部tab一键加入时调用） */
+        const refreshTabCounts = () => {
+            const blBtn = tabBar.querySelector('[data-fp-seat-tab="blacklist"]');
+            const wlBtn = tabBar.querySelector('[data-fp-seat-tab="whitelist"]');
+            const blN = TAB_META.blacklist.getCount();
+            const wlN = TAB_META.whitelist.getCount();
+            if (blBtn) blBtn.textContent = blN ? `🚫 黑名单(${blN})` : '🚫 黑名单';
+            if (wlBtn) wlBtn.textContent = wlN ? `⭐ 白名单(${wlN})` : '⭐ 白名单';
+        };
+
         // tab 切换
         const switchTab = (tab) => {
             FupanData.setSetting('fupan_seat_last_tab', tab);
@@ -2692,31 +2716,63 @@ const FupanRenderer = (function () {
 
         /**
          * 渲染黑名单/白名单 tab（共享骨架，meta 参数化差异点）
+         * TODO29.1：搜索 input 事件只做"席位列表区"局部重绘（paintSeats），
+         *          不再整块 innerHTML（旧实现每次击键销毁输入框→丢焦点丢文字，搜索不可用）；
+         *          全量重绘（paint）时搜索词通过 value 属性回填，按钮增删后关键词不丢
          */
         function paintSeatTab(box, key) {
             const meta = TAB_META[key];
             // 工作副本：面板内的增删先改内存数组，保存时才持久化
             let arr = meta.getList();
+            let kw = '';  // TODO29.1：搜索词状态（全量重绘时回填，局部重绘时从input实读）
 
             const inArr = nm => arr.some(b => String(nm).includes(b));
 
+            /** 席位行HTML（TODO29.4：有备注显示 (备注)+名称） */
+            const seatRowHtml = (s) => {
+                const on = inArr(s.name);
+                const netYi = FupanData.formatYi(s.net);
+                return `
+                    <div class="fp-bl-seat ${on ? 'fp-bl-on' : ''}">
+                        <span class="fp-bl-seat-name" title="当日上榜${s.cnt}只股票">${deptNameHtml(s.name)}</span>
+                        <span class="fp-bl-seat-net ${s.net >= 0 ? 'change-up' : 'change-down'}">${s.net >= 0 ? '+' : ''}${netYi}亿</span>
+                        <span class="fp-bl-seat-cnt">${s.cnt}股</span>
+                        <button class="fp-scheme-btn" data-fp-bl-seat="${esc(s.name)}">${on ? meta.btnOn : meta.btnOff}</button>
+                    </div>`;
+            };
+
+            /** 席位行按钮绑定（paint 与 paintSeats 共用） */
+            const bindSeatRows = (scope) => {
+                scope.querySelectorAll('[data-fp-bl-seat]').forEach(el =>
+                    el.addEventListener('click', () => {
+                        const nm = el.dataset.fpBlSeat;
+                        if (inArr(nm)) {
+                            arr = arr.filter(b => !nm.includes(b));
+                        } else if (arr.indexOf(nm) < 0) {
+                            arr.push(nm);
+                        }
+                        paint();  // 增删涉及chips/行按钮态 → 全量重绘（点击场景无焦点保持需求）
+                    }));
+            };
+
+            /** TODO29.1：席位列表区局部重绘（搜索输入时调用，输入框DOM不动） */
+            const paintSeats = () => {
+                const inp = box.querySelector('[data-fp-seat-search]');
+                if (inp) kw = String(inp.value || '').trim();
+                const seatsBox = box.querySelector('[data-fp-seats-box]');
+                if (!seatsBox) return;
+                const list = kw ? seats.filter(s => s.name.includes(kw)) : seats;
+                seatsBox.innerHTML = list.length
+                    ? list.map(seatRowHtml).join('')
+                    : '<div class="fp-empty">无匹配席位</div>';
+                bindSeatRows(seatsBox);
+            };
+
             const paint = () => {
-                const kw = ((box.querySelector('[data-fp-seat-search]') || {}).value || '').trim();
                 const list = kw ? seats.filter(s => s.name.includes(kw)) : seats;
                 const chips = arr.length
                     ? arr.map(b => `<span class="fp-bl-chip" title="${esc(b)}（点击移除）" data-fp-bl-remove="${esc(b)}">${esc(b)} ✕</span>`).join('')
                     : `<span class="fp-lhb-off">暂无${key === 'blacklist' ? '黑' : '白'}名单席位</span>`;
-                const rows = list.map(s => {
-                    const on = inArr(s.name);
-                    const netYi = FupanData.formatYi(s.net);
-                    return `
-                        <div class="fp-bl-seat ${on ? 'fp-bl-on' : ''}">
-                            <span class="fp-bl-seat-name" title="当日上榜${s.cnt}只股票">${esc(s.name)}</span>
-                            <span class="fp-bl-seat-net ${s.net >= 0 ? 'change-up' : 'change-down'}">${s.net >= 0 ? '+' : ''}${netYi}亿</span>
-                            <span class="fp-bl-seat-cnt">${s.cnt}股</span>
-                            <button class="fp-scheme-btn" data-fp-bl-seat="${esc(s.name)}">${on ? meta.btnOn : meta.btnOff}</button>
-                        </div>`;
-                }).join('');
                 box.innerHTML = `
                     <div class="fp-cfg-head">
                         <span class="fp-cfg-title">${meta.title}</span>
@@ -2730,9 +2786,11 @@ const FupanRenderer = (function () {
                     </div>
                     <div class="fp-cfg-group">${meta.seatsTitle}</div>
                     <div class="fp-cfg-grid">
-                        <input type="text" class="fp-bl-input" data-fp-seat-search placeholder="搜索席位名过滤…">
+                        <input type="text" class="fp-bl-input" data-fp-seat-search placeholder="搜索席位名过滤…" value="${esc(kw)}">
                     </div>
-                    <div class="fp-bl-seats" data-fp-seats-box>${rows || '<div class="fp-empty">无匹配席位</div>'}</div>
+                    <div class="fp-bl-seats" data-fp-seats-box>${list.length
+                        ? list.map(seatRowHtml).join('')
+                        : '<div class="fp-empty">无匹配席位</div>'}</div>
                     <div class="fp-cfg-actions">
                         <button class="btn btn-primary" data-fp-bl-save>保存并重算</button>
                         <button class="btn btn-secondary" data-fp-bl-clear>清空${key === 'blacklist' ? '黑' : '白'}名单</button>
@@ -2744,17 +2802,8 @@ const FupanRenderer = (function () {
                         arr = arr.filter(b => b !== el.dataset.fpBlRemove);
                         paint();
                     }));
-                // 席位行按钮切换
-                box.querySelectorAll('[data-fp-bl-seat]').forEach(el =>
-                    el.addEventListener('click', () => {
-                        const nm = el.dataset.fpBlSeat;
-                        if (inArr(nm)) {
-                            arr = arr.filter(b => !nm.includes(b));
-                        } else if (arr.indexOf(nm) < 0) {
-                            arr.push(nm);
-                        }
-                        paint();
-                    }));
+                // 席位行按钮
+                bindSeatRows(box);
                 // 手动输入添加
                 const doAdd = () => {
                     const inp = box.querySelector('[data-fp-bl-input]');
@@ -2767,8 +2816,8 @@ const FupanRenderer = (function () {
                 box.querySelector('[data-fp-bl-input]').addEventListener('keydown', e => {
                     if (e.key === 'Enter') doAdd();
                 });
-                // 搜索过滤
-                box.querySelector('[data-fp-seat-search]').addEventListener('input', paint);
+                // TODO29.1：搜索过滤（局部重绘保焦点，不再整块innerHTML）
+                box.querySelector('[data-fp-seat-search]').addEventListener('input', paintSeats);
                 // 保存并重算
                 box.querySelector('[data-fp-bl-save]').addEventListener('click', () => {
                     meta.saveList(arr);
@@ -2787,9 +2836,11 @@ const FupanRenderer = (function () {
         }
 
         /**
-         * 渲染营业部缓存 tab（TODO26.3）
+         * 渲染营业部缓存 tab（TODO26.3；TODO29.2/29.3/29.4 优化）
          * 子 tab：今日龙虎榜营业部 / 全部缓存（departments.json 分页）
          * 搜索优先从今日找，没找到在全部缓存里找
+         * TODO29.2：行内 🚫黑/⭐白 一键加黑/白名单（即时持久化+可再点移出）+ ✎备注
+         * TODO29.3：搜索/翻页只重绘 body 区（data-fp-dept-body），输入框焦点不丢
          */
         async function renderDeptTab(box, todaySeats) {
             const PAGE_SIZE = 30;
@@ -2810,65 +2861,91 @@ const FupanRenderer = (function () {
                 depts = [];  // 无缓存时空数组，仍显示今日龙虎榜
             }
 
+            /**
+             * 行HTML：TODO29.4 备注显示（(备注)+名称）；TODO29.2 行尾三个操作按钮
+             * 🚫黑/⭐白（命中名单显示"已黑/已白"，可再点移出）+ ✎备注编辑
+             */
             const buildSeatRows = (list, fromCache) => list.map(s => {
                 const name = s.name || s;
                 const code = s.code || '';
-                const netYi = FupanData.formatYi((fromCache ? s.amount : s.net) || 0);
-                const amountCls = (fromCache ? (s.amount >= 0) : (s.net >= 0)) ? 'change-up' : 'change-down';
+                const val = (fromCache ? s.amount : s.net) || 0;
+                const netYi = FupanData.formatYi(val);
+                const amountCls = val >= 0 ? 'change-up' : 'change-down';
+                const inBl = FupanScoring.getBlacklist().some(b => name.includes(b));
+                const inWl = FupanScoring.getWhitelist().some(b => name.includes(b));
                 return `
                     <div class="fp-bl-seat">
-                        <span class="fp-bl-seat-name" title="${esc(name)}${code ? '（code=' + code + '）' : ''}">${esc(name)}</span>
+                        <span class="fp-bl-seat-name" title="${esc(name)}${code ? '（code=' + code + '）' : ''}">${deptNameHtml(name)}</span>
                         <span class="fp-bl-seat-net ${amountCls}">${fromCache ? '累计' : '今日'} ${netYi}亿</span>
                         ${fromCache ? '' : `<span class="fp-bl-seat-cnt">${s.cnt}股</span>`}
+                        <button class="fp-scheme-btn${inBl ? ' fp-btn-on' : ''}" data-fp-dept-bl="${esc(name)}" title="${inBl ? '已在黑名单，点击移出' : '加入黑名单（净买入一票否决）'}">${inBl ? '已黑' : '🚫黑'}</button>
+                        <button class="fp-scheme-btn${inWl ? ' fp-btn-on' : ''}" data-fp-dept-wl="${esc(name)}" title="${inWl ? '已在白名单，点击移出' : '加入白名单（净买入席位加分）'}">${inWl ? '已白' : '⭐白'}</button>
+                        <button class="fp-scheme-btn" data-fp-dept-note="${esc(name)}" title="编辑自定义备注（显示为 (备注)+名称）">✎备注</button>
                     </div>`;
             }).join('');
 
-            const paint = () => {
-                const allCount = (depts || []).length;
-                const tabHtml = `
-                    <div class="fp-sub-tab-bar">
-                        <button class="fp-sub-tab${todayDeptTab === 'today' ? ' active' : ''}" data-fp-dept-sub="today">今日龙虎榜营业部（${todaySeats.length}个）</button>
-                        <button class="fp-sub-tab${todayDeptTab === 'all' ? ' active' : ''}" data-fp-dept-sub="all">全部缓存（${allCount}个）</button>
-                    </div>`;
-                const sub = todayDeptTab === 'today'
-                    ? paintToday()
-                    : paintAll();
-                box.innerHTML = `
-                    <div class="fp-cfg-head">
-                        <span class="fp-cfg-title">龙虎榜营业部数据缓存（TODO26.3）</span>
-                        <span class="fp-cfg-hint">后端 GitHub Actions 每月定时从东财 RPT_OPERATEDEPT_LIST_STATISTICS 接口采集并推送 public 仓库 data/fupan/departments.json；前端加载后分页展示，搜索优先命中今日龙虎榜营业部</span>
-                    </div>
-                    <div class="fp-cfg-grid">
-                        <input type="text" class="fp-bl-input" data-fp-dept-search placeholder="搜索营业部名优先今日、未命中再全缓存…" value="${esc(kw)}">
-                    </div>
-                    ${tabHtml}
-                    <div data-fp-dept-body>${sub}</div>`;
-
-                // 子 tab 切换
-                box.querySelectorAll('[data-fp-dept-sub]').forEach(b =>
-                    b.addEventListener('click', () => {
-                        todayDeptTab = b.dataset.fpDeptSub;
-                        deptPage = 0;
-                        paint();
-                    }));
-                // 搜索实时过滤
-                box.querySelector('[data-fp-dept-search]').addEventListener('input', e => {
-                    kw = e.target.value.trim();
-                    deptPage = 0;
-                    paint();
-                });
+            /**
+             * TODO29.2：营业部一键加/移黑、白名单（即时持久化；与黑/白名单tab一致的包含匹配语义）
+             * 命中已有条目（列表关键词被该营业部名包含）→ 移出该关键词；未命中 → 加入全名
+             */
+            const toggleSeatList = (key, name) => {
+                if (!name) return;
+                const meta = TAB_META[key];
+                const cur = meta.getList();
+                const hitIdx = cur.findIndex(b => name.includes(b));
+                let msg;
+                if (hitIdx >= 0) {
+                    cur.splice(hitIdx, 1);
+                    msg = `已将「${name}」移出${key === 'blacklist' ? '黑' : '白'}名单`;
+                } else {
+                    cur.push(name);
+                    msg = `已将「${name}」加入${key === 'blacklist' ? '黑' : '白'}名单（点"保存并重算"使评分生效）`;
+                }
+                meta.saveList(cur);
+                refreshTabCounts();
+                paintBody();  // 局部刷新行按钮态（不动搜索框）
+                const toast = box.querySelector('[data-fp-dept-toast]');
+                if (toast) {
+                    toast.textContent = msg;
+                    toast.style.display = '';
+                }
             };
 
-            function paintToday() {
-                const filtered = kw
-                    ? todaySeats.filter(s => s.name.includes(kw))
-                    : todaySeats;
-                return `<div class="fp-bl-seats">${filtered.length
-                    ? buildSeatRows(filtered, false)
-                    : `<div class="fp-empty">${kw ? '今日龙虎榜营业部无匹配，可切"全部缓存"继续搜' : '当日无龙虎榜上榜营业部'}</div>`}</div>`;
-            }
+            /** 行内按钮绑定（加黑/加白/备注编辑） */
+            const bindDeptRows = (scope) => {
+                scope.querySelectorAll('[data-fp-dept-bl]').forEach(el =>
+                    el.addEventListener('click', () => toggleSeatList('blacklist', el.dataset.fpDeptBl)));
+                scope.querySelectorAll('[data-fp-dept-wl]').forEach(el =>
+                    el.addEventListener('click', () => toggleSeatList('whitelist', el.dataset.fpDeptWl)));
+                scope.querySelectorAll('[data-fp-dept-note]').forEach(el =>
+                    el.addEventListener('click', () => {
+                        const nm = el.dataset.fpDeptNote;
+                        const cur = FupanScoring.getDeptNotes()[nm] || '';
+                        const v = window.prompt('编辑营业部备注（留空=删除备注）：', cur);
+                        if (v === null) return;  // 取消不保存
+                        FupanScoring.saveDeptNote(nm, v);
+                        paintBody();  // 刷新 (备注)+名称 显示
+                    }));
+            };
 
-            function paintAll() {
+            /** 分页按钮绑定 */
+            const bindPager = (scope) => {
+                scope.querySelectorAll('[data-fp-dept-prev]').forEach(b =>
+                    b.addEventListener('click', () => { deptPage = Math.max(0, deptPage - 1); paintBody(); }));
+                scope.querySelectorAll('[data-fp-dept-next]').forEach(b =>
+                    b.addEventListener('click', () => { deptPage++; paintBody(); }));
+            };
+
+            /** 子tab内容HTML（今日 / 全部缓存分页） */
+            const paintBodyHtml = () => {
+                if (todayDeptTab === 'today') {
+                    const filtered = kw
+                        ? todaySeats.filter(s => s.name.includes(kw))
+                        : todaySeats;
+                    return `<div class="fp-bl-seats">${filtered.length
+                        ? buildSeatRows(filtered, false)
+                        : `<div class="fp-empty">${kw ? '今日龙虎榜营业部无匹配，可切"全部缓存"继续搜' : '当日无龙虎榜上榜营业部'}</div>`}</div>`;
+                }
                 if (!depts || !depts.length) {
                     return `<div class="fp-empty">本地无 departments.json 缓存，请等待 CI 每月定时采集推送（或首次采集需要 GitHub Actions 手动 dispatch）</div>`;
                 }
@@ -2877,6 +2954,7 @@ const FupanRenderer = (function () {
                     : depts;
                 const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
                 if (deptPage >= totalPages) deptPage = totalPages - 1;
+                if (deptPage < 0) deptPage = 0;
                 const slice = filtered.slice(deptPage * PAGE_SIZE, (deptPage + 1) * PAGE_SIZE);
                 const pager = totalPages > 1 ? `
                     <div class="fp-pager">
@@ -2884,48 +2962,62 @@ const FupanRenderer = (function () {
                         <span class="fp-pager-info">${deptPage + 1}/${totalPages} 共${filtered.length}个</span>
                         <button class="btn btn-sm" data-fp-dept-next ${deptPage >= totalPages - 1 ? 'disabled' : ''}>下一页</button>
                     </div>` : '';
-                const body = `<div class="fp-bl-seats">${slice.length
+                return `<div class="fp-bl-seats">${slice.length
                     ? buildSeatRows(slice, true)
-                    : `<div class="fp-empty">无匹配营业部</div>`}</div>`;
-                const wrap = `<div data-fp-dept-wrap>${body}${pager}</div>`;
-                // 翻页事件需在 paint 绑定
-                setTimeout(() => {
-                    const wrapEl = box.querySelector('[data-fp-dept-wrap]');
-                    if (wrapEl) {
-                        wrapEl.querySelectorAll('[data-fp-dept-prev]').forEach(b =>
-                            b.addEventListener('click', () => { deptPage--; paintAllRefresh(); }));
-                        wrapEl.querySelectorAll('[data-fp-dept-next]').forEach(b =>
-                            b.addEventListener('click', () => { deptPage++; paintAllRefresh(); }));
-                    }
-                }, 0);
-                return wrap;
-            }
-            // 分页刷新（只替换 body 区，保留搜索词与子 tab）
-            function paintAllRefresh() {
+                    : '<div class="fp-empty">无匹配营业部</div>'}</div>${pager}`;
+            };
+
+            /** TODO29.3：body 区局部重绘（搜索/翻页/行操作共用，只替换列表区不动输入框） */
+            const paintBody = () => {
                 const bodyBox = box.querySelector('[data-fp-dept-body]');
-                if (!bodyBox) return paint();  // fallback
-                const filtered = kw
-                    ? depts.filter(s => (s.name || '').includes(kw))
-                    : depts;
-                const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-                if (deptPage >= totalPages) deptPage = totalPages - 1;
-                const slice = filtered.slice(deptPage * PAGE_SIZE, (deptPage + 1) * PAGE_SIZE);
-                const pager = totalPages > 1 ? `
-                    <div class="fp-pager">
-                        <button class="btn btn-sm" data-fp-dept-prev ${deptPage === 0 ? 'disabled' : ''}>上一页</button>
-                        <span class="fp-pager-info">${deptPage + 1}/${totalPages} 共${filtered.length}个</span>
-                        <button class="btn btn-sm" data-fp-dept-next ${deptPage >= totalPages - 1 ? 'disabled' : ''}>下一页</button>
-                    </div>` : '';
-                bodyBox.innerHTML = `<div class="fp-bl-seats">${slice.length
-                    ? buildSeatRows(slice, true)
-                    : `<div class="fp-empty">无匹配营业部</div>`}</div>${pager}`;
-                setTimeout(() => {
-                    box.querySelectorAll('[data-fp-dept-prev]').forEach(b =>
-                        b.addEventListener('click', () => { deptPage--; paintAllRefresh(); }));
-                    box.querySelectorAll('[data-fp-dept-next]').forEach(b =>
-                        b.addEventListener('click', () => { deptPage++; paintAllRefresh(); }));
-                }, 0);
-            }
+                if (!bodyBox) return;
+                bodyBox.innerHTML = paintBodyHtml();
+                bindDeptRows(bodyBox);
+                bindPager(bodyBox);
+            };
+
+            const paint = () => {
+                const allCount = (depts || []).length;
+                box.innerHTML = `
+                    <div class="fp-cfg-head">
+                        <span class="fp-cfg-title">龙虎榜营业部数据缓存</span>
+                        <span class="fp-cfg-hint">后端 GitHub Actions 每月定时采集并推送公开仓库缓存；行尾 🚫黑/⭐白 一键加入黑/白名单（即时保存，可再点移出），✎备注 自定义（列表显示 (备注)+名称）</span>
+                    </div>
+                    <div class="fp-cfg-grid">
+                        <input type="text" class="fp-bl-input" data-fp-dept-search placeholder="搜索营业部名优先今日、未命中再全缓存…" value="${esc(kw)}">
+                    </div>
+                    <div class="fp-sub-tab-bar">
+                        <button class="fp-sub-tab${todayDeptTab === 'today' ? ' active' : ''}" data-fp-dept-sub="today">今日龙虎榜营业部（${todaySeats.length}个）</button>
+                        <button class="fp-sub-tab${todayDeptTab === 'all' ? ' active' : ''}" data-fp-dept-sub="all">全部缓存（${allCount}个）</button>
+                    </div>
+                    <div class="fp-dept-toast" data-fp-dept-toast style="display:none"></div>
+                    <div data-fp-dept-body>${paintBodyHtml()}</div>
+                    <div class="fp-cfg-actions">
+                        <button class="btn btn-primary" data-fp-dept-save>保存并重算</button>
+                    </div>`;
+
+                // 子 tab 切换（按钮点击无焦点保持需求，全量重绘更新高亮）
+                box.querySelectorAll('[data-fp-dept-sub]').forEach(b =>
+                    b.addEventListener('click', () => {
+                        todayDeptTab = b.dataset.fpDeptSub;
+                        deptPage = 0;
+                        paint();
+                    }));
+                // TODO29.3：搜索实时过滤（只重绘body区，输入框焦点/IME不丢）
+                box.querySelector('[data-fp-dept-search]').addEventListener('input', e => {
+                    kw = e.target.value.trim();
+                    deptPage = 0;
+                    paintBody();
+                });
+                // TODO29.2：保存并重算（黑/白名单生效入口；面板关闭+评分重渲染）
+                box.querySelector('[data-fp-dept-save]').addEventListener('click', () => {
+                    FupanData.setSetting('fupan_score_bl_open', false);
+                    renderScore(container, day, dateStr);
+                });
+                // 初始body区按钮绑定
+                bindDeptRows(box.querySelector('[data-fp-dept-body]'));
+                bindPager(box.querySelector('[data-fp-dept-body]'));
+            };
 
             paint();
         }

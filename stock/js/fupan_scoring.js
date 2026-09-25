@@ -692,6 +692,33 @@ const FupanScoring = (function () {
         return getWhitelist().length > 0;
     }
 
+    // ===== 营业部自定义备注（TODO29.4：席位面板营业部列表显示 (备注)+名称） =====
+    const DEPT_NOTES_KEY = 'fupan_dept_notes';
+
+    /**
+     * 读取营业部备注映射（TODO29.4）
+     * @returns {Object} { 营业部名: 备注文本 } 无配置返回空对象
+     */
+    function getDeptNotes() {
+        const v = FupanData.getSetting(DEPT_NOTES_KEY, {});
+        return (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
+    }
+
+    /**
+     * 写入/删除单条营业部备注（TODO29.4：空备注=删除该条）
+     * @param {string} name - 营业部名（按名称作key，当日席位与缓存列表同名同实体）
+     * @param {string} note - 备注文本（空串/null=删除）
+     */
+    function saveDeptNote(name, note) {
+        const k = String(name || '').trim();
+        if (!k) return;
+        const notes = getDeptNotes();
+        const v = String(note || '').trim();
+        if (v) notes[k] = v;
+        else delete notes[k];
+        FupanData.setSetting(DEPT_NOTES_KEY, notes);
+    }
+
     /**
      * 配置是否对指定交易日生效（交易日 >= 生效日）
      * @param {Object} config 配置
@@ -929,6 +956,9 @@ const FupanScoring = (function () {
         // 龙虎榜白名单席位（TODO25.1）
         getWhitelist,
         saveWhitelist,
-        hasWhitelist
+        hasWhitelist,
+        // 营业部自定义备注（TODO29.4）
+        getDeptNotes,
+        saveDeptNote
     };
 })();

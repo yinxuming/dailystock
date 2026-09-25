@@ -66,6 +66,8 @@ const App = (function () {
         } catch (e) {
             config = { ...DEFAULT_CONFIG };
         }
+        // TODO30.2：把并发数同步给API层（槽预约节流的分母：槽间距=请求间隔/并发流数）
+        StockAPI.setRequestConcurrency(config.concurrency);
     }
 
     /**
@@ -258,6 +260,38 @@ const App = (function () {
     }
 
     /**
+     * 生成自定义监控股票的占位行（TODO30.1）
+     * 主流程：用监控列表构造带 __pending 标记的最小结构行，让 renderTable 立即渲染
+     * "计算中"占位；K线获取+异动计算完成后由 renderActiveMarketView 全量覆盖
+     * @param {Array} customs - 自定义监控股票列表 [{code, name, market}]
+     * @param {string} targetDate - 目标交易日（表头日期用）
+     * @returns {Array} 占位行数组（结构兼容renderTable，空字段均有容错）
+     */
+    function buildPendingRows(customs, targetDate) {
+        return customs.map(s => ({
+            code: s.code,
+            name: s.name,
+            date: targetDate,
+            price: 0,
+            prevClose: 0,
+            changePercent: 0,
+            limitUpRate: 0.1,
+            isCustom: true,
+            __pending: true,       // renderer识别此标记：异动类型/触发列显示"计算中"
+            dominantRule: '__pending',
+            rules: [{
+                ruleName: '__pending',
+                tagClass: '',
+                triggered: false,
+                currentGain: null,
+                trendDays: 0,
+                triggers: [],        // 空数组→触发值列全部显示"--"
+                displayTriggers: []
+            }]
+        }));
+    }
+
+    /**
      * 主流程：检查缓存 → 获取候选股票 → 获取K线 → 计算异动 → 渲染结果
      * @param {boolean} forceRefresh - 是否强制刷新（清空缓存）
      */
@@ -343,8 +377,17 @@ const App = (function () {
 
             console.log(`候选股票: ${stocks.length}只${customStocks.length > 0 ? `，自定义监控追加${customStocks.length}只` : ''}`);
 
+            // TODO30.1：关注股票占位渲染——K线批量获取是慢环节（百只串行需数分钟），
+            // 关注异动tab先用监控列表渲染"计算中"占位行让用户立刻看到列表，
+            // 异动计算完成后 renderActiveMarketView 全量覆盖；市场异动tab数据本就需全量等待，保持loading。
+            // 占位显示期间后续showLoading均传keepTable=true，避免切回loading视图覆盖占位行
+            const pendingShown = (marketSub === 'focus' && customs.length > 0);
+            if (pendingShown) {
+                Renderer.renderTable(buildPendingRows(customs, targetDate), config.forwardDays, targetDate);
+            }
+
             // 第2步：批量获取K线数据（只对候选股票请求，大幅减少请求量）
-            Renderer.showLoading('正在获取K线数据... (0/' + allStocks.length + ')');
+            Renderer.showLoading('正在获取K线数据... (0/' + allStocks.length + ')', pendingShown);
             const klineMap = await StockAPI.batchGetKline(
                 allStocks.map(s => s.secid),
                 config.concurrency,
@@ -352,14 +395,14 @@ const App = (function () {
             );
 
             // 第2.5步：获取基准指数K线数据（用于偏离值计算）
-            Renderer.showLoading('正在获取基准指数数据...');
+            Renderer.showLoading('正在获取基准指数数据...', pendingShown);
             const indexKlineMap = await StockAPI.getBenchmarkIndices(allStocks, 40);
             console.log('基准指数获取完成:', Array.from(indexKlineMap.keys()).join(', '));
 
             // 第3步：计算异动分析（传入指数K线数据和交易日偏移量）
             // TODO16.3.1：全量分析不做风险过滤（市场异动tab显示全部按风险降序，
             // 关注异动tab单独过滤自定义监控股），双视图在渲染阶段分流
-            Renderer.showLoading('正在计算异动分析...');
+            Renderer.showLoading('正在计算异动分析...', pendingShown);
             const results = UnusualCalculator.analyzeStocks(
                 allStocks,
                 klineMap,

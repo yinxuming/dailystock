@@ -537,6 +537,25 @@ body.embedded .app-layout {
     border: 1px solid rgba(100, 116, 139, 0.3);
 }
 
+/* TODO30.1：关注异动占位行的"计算中"标签（数据就绪后由全量渲染覆盖） */
+.tag-pending,
+.tag-triggered-pending {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    background: rgba(148, 163, 184, 0.12);
+    color: #94a3b8;
+    border: 1px dashed rgba(148, 163, 184, 0.45);
+    animation: fp-pending-blink 1.2s ease-in-out infinite;
+}
+
+@keyframes fp-pending-blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.45; }
+}
+
 /* ===== 设置页（内嵌页面，原模态框迁移） ===== */
 /* 多tab面板：默认隐藏，active时显示 */
 .settings-tab-panel {
@@ -1684,6 +1703,38 @@ body.embedded .app-layout {
     width: 40px;
     text-align: right;
     color: #64748b;
+}
+
+/* ===== TODO29：营业部tab行内操作（加黑/加白/备注） ===== */
+/* 营业部行内小按钮（🚫黑/⭐白/✎备注），比 fp-scheme-btn 更紧凑 */
+.fp-bl-seat .fp-scheme-btn {
+    padding: 2px 8px;
+    font-size: 11px;
+    flex-shrink: 0;
+}
+
+/* 已在黑/白名单的按钮态（TODO29.2：可再点移出） */
+.fp-scheme-btn.fp-btn-on {
+    border-color: rgba(56, 189, 248, 0.65);
+    background: rgba(56, 189, 248, 0.18);
+    color: #7dd3fc;
+}
+
+/* TODO29.4：营业部备注前缀（(备注)+名称 中的备注部分） */
+.fp-dept-note {
+    color: #fbbf24;
+    margin-right: 2px;
+}
+
+/* TODO29.2：营业部一键加黑/白名单的操作反馈条 */
+.fp-dept-toast {
+    padding: 6px 10px;
+    margin: 4px 0;
+    font-size: 12px;
+    color: #7dd3fc;
+    background: rgba(56, 189, 248, 0.10);
+    border: 1px solid rgba(56, 189, 248, 0.35);
+    border-radius: 6px;
 }
 
 .fp-cfg-head {

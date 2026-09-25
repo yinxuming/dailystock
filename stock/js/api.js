@@ -55,9 +55,18 @@ const StockAPI = (function () {
     };
 
     // ===== 请求频率控制 =====
-    let requestInterval = 2000; // 每个请求之间的间隔(ms)，默认2000ms，避免东方财富限流
-    let lastRequestTime = 0; // 上次请求时间戳
+    // TODO30.2：请求节流重构为"出发时间槽预约"——并发场景下各请求按槽位均匀错峰出发，
+    // 替代旧的共享 lastRequestTime（旧实现并发时多个请求同时等同一间隔后一齐发出，既不提速也不安全）
+    let requestInterval = 2000;   // 用户配置的请求间隔(ms)，默认2000ms，避免东方财富限流（TODO30.2：已持久化）
+    let requestConcurrency = 1;   // 并发流数（main.js按config.concurrency设置，槽间距=间隔/并发）
+    let nextSlotTime = 0;         // 下一个可出发的时间槽时间戳
+    const INTERVAL_KEY = 'unusual_request_interval'; // TODO30.2：间隔持久化key（旧实现不持久化，重载即回2000ms）
     let proxyBackoffUntil = 0; // 代理退避到何时（全局冷却）
+
+    /** TODO30.2：计算相邻请求出发间隔 = 用户间隔/并发流数（下限150ms兜底防打爆） */
+    function currentSpacing() {
+        return Math.max(150, Math.round(requestInterval / Math.max(1, requestConcurrency)));
+    }
 
     // ===== 缓存配置 =====
     const KLINE_CACHE_PREFIX = 'unusual_kline_';      // 股票K线缓存key前缀
@@ -156,6 +165,8 @@ const StockAPI = (function () {
     /**
      * 通过代理发送请求
      * 代理URL格式：{proxyUrl}/proxy?target={encodedTargetUrl}
+     * TODO30.2：节流改为"出发槽预约"——每个请求预约 nextSlotTime 起飞（并发流间自动错峰），
+     *          替代旧共享 lastRequestTime（并发时多个请求同读同写同一时间戳，等待后一齐发出）
      */
     async function proxyRequest(targetUrl, timeout = 15000) {
         // 1. 检查是否需要全局退避（代理频繁失败后的冷却）
@@ -166,18 +177,15 @@ const StockAPI = (function () {
             await new Promise(r => setTimeout(r, waitMs));
         }
 
-        // 2. 强制请求间隔（确保每次请求之间有足够间隔）
-        if (lastRequestTime > 0) {
-            const elapsed = Date.now() - lastRequestTime;
-            // 基础间隔 + 随机抖动（±30%）
-            const jitter = Math.floor(requestInterval * 0.3 * (Math.random() - 0.5));
-            const minGap = requestInterval + jitter;
-            if (elapsed < minGap) {
-                const waitMs = minGap - elapsed;
-                await new Promise(r => setTimeout(r, waitMs));
-            }
+        // 2. 预约出发槽（相邻请求出发间隔 = 用户间隔/并发流数 + 随机抖动±30%，防固定频率指纹）
+        const spacing = currentSpacing();
+        const jitter = Math.floor(spacing * 0.3 * (Math.random() - 0.5));
+        const slot = Math.max(Date.now(), nextSlotTime + jitter);
+        nextSlotTime = slot + spacing;
+        const waitMs = slot - Date.now();
+        if (waitMs > 0) {
+            await new Promise(r => setTimeout(r, waitMs));
         }
-        lastRequestTime = Date.now();
 
         const proxyUrl = getCurrentProxyUrl();
         if (!proxyUrl) throw new Error('无可用代理');
@@ -958,10 +966,11 @@ const StockAPI = (function () {
     }
 
     /**
-     * 批量获取K线数据（逐个请求+间隔，平台轮询分散请求量避免单平台限流）
+     * 批量获取K线数据（TODO30.2：并发池模式，多worker并行消费队列提速）
+     * 出发节奏由proxyRequest的槽预约统一控制（槽间距=用户间隔/并发流数），此处只负责并发调度；
      * 失败重扫：第一轮获取失败的股票再重试一轮（换平台组合），优先保证导入数据完整性
      * @param {Array} secids - 股票ID数组
-     * @param {number} concurrency - 并发数（保留参数，实际逐个请求更稳定）
+     * @param {number} concurrency - 并发流数（1=退化为串行，>1时多worker并行消费队列）
      * @param {Function} onProgress - 进度回调 (completed, total)
      * @param {number} limit - 每只股票获取的K线数量（默认40，自选浏览视图需260计算今年来涨幅）
      * @returns {Promise<Map>} secid -> klines 映射
@@ -971,35 +980,55 @@ const StockAPI = (function () {
         const total = secids.length;
         const failed = [];
         let completed = 0;
+        let cursor = 0; // 共享队列游标，各worker从此处取下一只股票
 
-        // 第一轮：逐个请求（间隔由proxyRequest统一控制）
-        for (let i = 0; i < total; i++) {
-            try {
-                const klines = await getStockKline(secids[i], limit);
-                result.set(secids[i], klines);
-                if (klines.length === 0) failed.push(secids[i]);
-            } catch (e) {
-                console.warn('获取K线失败:', secids[i], e.message);
-                result.set(secids[i], []);
-                failed.push(secids[i]);
+        // TODO30.2根因修复：并发参数必须传导到节流层——槽间距=间隔/并发流数，
+        // 若requestConcurrency仍为1（调用方未同步，如独立调用/测试），多worker会被
+        // 2000ms槽间距卡成伪并发（总耗时与串行一致）。执行期间临时提升，finally恢复。
+        const savedConcurrency = requestConcurrency;
+        if (concurrency > savedConcurrency) setRequestConcurrency(concurrency);
+
+        // 单个worker主流程：循环从共享队列取股票→请求K线→计数回调，直到队列取空
+        async function worker() {
+            while (true) {
+                const i = cursor++;
+                if (i >= total) return;
+                try {
+                    const klines = await getStockKline(secids[i], limit);
+                    result.set(secids[i], klines);
+                    if (klines.length === 0) failed.push(secids[i]);
+                } catch (e) {
+                    console.warn('获取K线失败:', secids[i], e.message);
+                    result.set(secids[i], []);
+                    failed.push(secids[i]);
+                }
+                completed++;
+                if (onProgress) onProgress(completed, total);
             }
-            completed++;
-            if (onProgress) onProgress(completed, total);
         }
 
-        // 失败重扫：换平台组合再试一轮
-        if (failed.length > 0) {
-            console.log('K线失败重扫: ' + failed.length + '只（' + failed.join(',') + '）');
-            for (const secid of failed) {
-                try {
-                    const klines = await getStockKline(secid, limit);
-                    if (klines.length > 0) {
-                        result.set(secid, klines);
+        try {
+            // 第一轮：并发池（并发流数=concurrency，各流出发间隔由proxyRequest槽预约错峰控制）
+            const workerCount = Math.max(1, Math.min(concurrency, total));
+            await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+            // 失败重扫：换平台组合再试一轮（串行，失败股通常是个别限流，无需并发）
+            if (failed.length > 0) {
+                console.log('K线失败重扫: ' + failed.length + '只（' + failed.join(',') + '）');
+                for (const secid of failed) {
+                    try {
+                        const klines = await getStockKline(secid, limit);
+                        if (klines.length > 0) {
+                            result.set(secid, klines);
+                        }
+                    } catch (e) {
+                        console.warn('K线重扫仍失败:', secid, e.message);
                     }
-                } catch (e) {
-                    console.warn('K线重扫仍失败:', secid, e.message);
                 }
             }
+        } finally {
+            // 恢复调用前的并发流数（不影响调用方全局节奏设置）
+            requestConcurrency = savedConcurrency;
         }
 
         return result;
@@ -1351,13 +1380,35 @@ const StockAPI = (function () {
         return requestInterval;
     }
 
-    /** 设置请求间隔(ms) */
+    /**
+     * 设置请求间隔(ms)，并持久化到localStorage（TODO30.2：旧实现不持久化，重载页面即回默认值）
+     * 合法范围500~10000ms，非法输入回退2000ms
+     */
     function setRequestInterval(ms) {
         requestInterval = Math.max(500, Math.min(10000, parseInt(ms) || 2000));
+        try {
+            localStorage.setItem(INTERVAL_KEY, String(requestInterval));
+        } catch (e) {
+            console.warn('保存请求间隔失败:', e.message);
+        }
     }
 
-    // 初始化时加载代理配置
+    /**
+     * 设置并发流数（TODO30.2：槽预约节流的分母，槽间距=用户间隔/并发流数）
+     * 合法范围1~8，非法输入回退1
+     */
+    function setRequestConcurrency(n) {
+        requestConcurrency = Math.max(1, Math.min(8, parseInt(n) || 1));
+    }
+
+    // 初始化时加载代理配置与持久化的请求间隔（TODO30.2）
     loadProxyConfig();
+    try {
+        const savedInterval = parseInt(localStorage.getItem(INTERVAL_KEY));
+        if (!isNaN(savedInterval)) {
+            requestInterval = Math.max(500, Math.min(10000, savedInterval));
+        }
+    } catch (e) { /* localStorage不可用时保持默认值 */ }
 
     return {
         getCandidateStocks,
@@ -1369,6 +1420,7 @@ const StockAPI = (function () {
         getRequestMode,
         getRequestInterval,
         setRequestInterval,
+        setRequestConcurrency,
         getProxyConfig,
         setProxyConfig,
         clearAllCache,
