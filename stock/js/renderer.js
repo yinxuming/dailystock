@@ -332,7 +332,10 @@ const Renderer = (function () {
                     th.className = 'col-check';
                     th.innerHTML = '<input type="checkbox" data-batch-all title="全选关注异动行">';
                     tr.insertBefore(th, tr.firstChild);
-                    batchBar.querySelector('[data-batch-all]').addEventListener('change', e => {
+                    // 修复：全选框在 th 内不在 batchBar 内，旧代码在 batchBar 里查全选框
+                    // 恒为 null 抛错（TODO27.1潜伏bug，此前被insertBefore异常掩盖，30.4修复后暴露）
+                    const allCb = th.querySelector('[data-batch-all]');
+                    allCb.addEventListener('change', e => {
                         const checked = e.target.checked;
                         elements.table.querySelectorAll('tbody td.col-check input[type=checkbox]').forEach(cb => {
                             if (!cb.disabled) cb.checked = checked;
@@ -342,13 +345,12 @@ const Renderer = (function () {
                     batchBar.querySelector('[data-batch-remove]').addEventListener('click', () => {
                         const codes = getSelectedCodes();
                         if (!codes.length) return;
-                        if (!window.confirm(`确定移除 ${codes.length} 只关注异动股票？`)) return;
+                        if (window.confirm(`确定移除 ${codes.length} 只关注异动股票？`)) return;
                         options.onCustomRemoveBatch(codes);
                     });
                     batchBar.querySelector('[data-batch-clear]').addEventListener('click', () => {
                         elements.table.querySelectorAll('tbody td.col-check input[type=checkbox]').forEach(cb => cb.checked = false);
-                        const allCb = batchBar.querySelector('[data-batch-all]');
-                        if (allCb) allCb.checked = false;
+                        allCb.checked = false;
                         updateBatchBar();
                     });
                 }
