@@ -900,6 +900,13 @@ const Watchlist = (function () {
         tbody.innerHTML = '';
         tbody.appendChild(fragment);
         document.getElementById('wlBrowseTableSection').style.display = 'block';
+
+        // TODO31：列设置（28列表格，齿轮插在代码列；锁定checkbox/代码/名称三个sticky关键列）
+        TableColSettings.apply(document.getElementById('wlBrowseTable'), {
+            key: 'watchlist',
+            lockKeys: ['code', 'name'],
+            skipGearClasses: ['bt-check']
+        });
     }
 
     /**

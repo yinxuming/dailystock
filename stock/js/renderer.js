@@ -568,6 +568,12 @@ const Renderer = (function () {
             // 清空并填充表格
             elements.tableBody.innerHTML = '';
             elements.tableBody.appendChild(fragment);
+
+            // TODO31：列设置（超7列表格首列表头插齿轮，可显隐每列/调列宽，localStorage持久化）
+            // 配置由实例options.colSettings传入（工厂多实例各自独立key）
+            if (options.colSettings) {
+                TableColSettings.apply(elements.table, options.colSettings);
+            }
         }
 
         /**
@@ -625,6 +631,12 @@ const Renderer = (function () {
         tableSection: 'tableSection',
         table: 'stockTable'
     }, {
+        // TODO31：列设置（锁定名称列；checkbox列批量模式动态出现不放齿轮）
+        colSettings: {
+            key: 'market',
+            lockKeys: ['name'],
+            skipGearClasses: ['col-check']
+        },
         onCustomRemove: (code) => {
             if (typeof App !== 'undefined' && App.removeCustomMonitor) {
                 App.removeCustomMonitor(code);

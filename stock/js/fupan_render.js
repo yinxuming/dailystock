@@ -1070,6 +1070,17 @@ const FupanRenderer = (function () {
         const table = pool === 'zt' ? ztPoolTable(rows) : (pool === 'dt' ? dtPoolTable(rows) : zbPoolTable(rows));
         listEl.innerHTML = `<h4 class="fp-chart-title">${esc(poolNames[pool])}：${esc(catLabel)}（${rows.length}只）</h4>${batchBar}${table}`;
         bindPoolBatch(listEl);
+
+        // TODO31：列设置（三池表均超7列；按池类型独立持久化；锁定名称列；
+        // 复选框列（fp-pool-check-th）不放齿轮；池切换列数变化时apply自动适配）
+        const poolTable = listEl.querySelector('table.stock-table');
+        if (poolTable) {
+            TableColSettings.apply(poolTable, {
+                key: 'fp_pool_' + pool,
+                lockKeys: ['名称'],
+                skipGearClasses: ['fp-pool-check-th']
+            });
+        }
     }
 
     /**
@@ -1728,6 +1739,14 @@ const FupanRenderer = (function () {
                 + (curMax ? ` · 高度${curMax}板${curStocks ? '·' + esc(curStocks) : ''}` : '');
         }
         body.innerHTML = mbTableHtml(data);
+
+        // TODO31：列设置（周期表=日期+涨停+跌停+N个板级列，周期拉长后超7列；
+        // 板级列key按th文本"1板".."N板"稳定，周期/深度调整列数变化时配置仍按列名匹配；
+        // 板级数≤4时总列数不足8列，apply自动不启用并清理齿轮；齿轮插日期列并锁定）
+        const mbTable = body.querySelector('table.stock-table');
+        if (mbTable) {
+            TableColSettings.apply(mbTable, { key: 'fp_max_board', lockKeys: ['日期'] });
+        }
     }
 
     // ===== 子tab4：评分预测 =====
