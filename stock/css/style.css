@@ -2614,6 +2614,12 @@ tr.fp-cat-selected td.fp-cat-name {
     overflow-x: auto;
 }
 
+/* 列宽自适应内容（覆盖全局table-layout:fixed）：
+   板级列宽=该列最宽徽标（徽标块级独占一行，min=max内容宽一致，列宽确定不截断） */
+.fp-mb-table {
+    table-layout: auto;
+}
+
 .fp-mb-table th,
 .fp-mb-table td {
     white-space: nowrap;
@@ -2636,18 +2642,27 @@ tr.fp-cat-selected td.fp-cat-name {
 .fp-mb-cell {
     min-width: 64px;
     vertical-align: top;
+    /* 多股票换行完整显示：覆盖全局td的nowrap+ellipsis截断 */
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
 }
 
 /* 股票徽标（同股票全周期同色，样式内联注入配色） */
 .fp-mb-stock {
-    display: inline-block;
     padding: 2px 8px;
-    margin: 1px 2px;
     border-radius: 5px;
     border: 1px solid;
     font-size: 12px;
     font-weight: 600;
     line-height: 1.5;
+}
+
+/* 徽标块级独占一行：多股票逐行完整显示名称，不再"..."截断 */
+.fp-mb-cell .fp-mb-stock {
+    display: block;
+    width: fit-content;
+    margin: 2px 0;
 }
 
 .fp-mb-stock a {
