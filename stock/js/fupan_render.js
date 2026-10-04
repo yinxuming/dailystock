@@ -2362,7 +2362,7 @@ const FupanRenderer = (function () {
         box.innerHTML = `
             <h4 class="fp-chart-title">方案对比（Top5晋级命中率，金色=该窗口最优）</h4>
             <div class="table-wrapper">
-                <table class="stock-table">
+                <table class="stock-table fp-cmp-table">
                     <thead><tr><th>方案</th><th>昨日窗口</th><th>近3日窗口</th><th>近5日窗口</th></tr></thead>
                     <tbody>${rows}</tbody>
                 </table>
