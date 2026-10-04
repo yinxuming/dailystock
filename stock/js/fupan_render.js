@@ -2276,7 +2276,7 @@ const FupanRenderer = (function () {
         const allTable = allRows ? `
             <h4 class="fp-chart-title">全量评分（${allScores.length}只）</h4>
             <div class="table-wrapper">
-                <table class="stock-table">
+                <table class="stock-table fp-score-table">
                     <thead><tr><th>名称</th><th>代码</th><th title="连板天数（首板=1）">连板</th><th>总分</th><th>晋级概率</th><th title="龙虎榜净买额（亿元）">龙虎榜</th><th>否决</th></tr></thead>
                     <tbody>${allRows}</tbody>
                 </table>

@@ -188,31 +188,72 @@ html, body {
     background: #0d1117;
 }
 
-/* ===== 响应式：窄屏强制收起样式（图标模式） ===== */
+/* ===== 响应式：TODO33 手机端改【底部主tab栏】（手机App标准结构） =====
+   替代旧方案（窄屏仅收成56px左侧图标栏——实测仍压缩iframe宽度且不符合手机操作习惯）；
+   菜单纵向改横向均分、图标+小字双行、标题与收起按钮隐藏（收起态class由媒体查询统一覆盖） */
 @media (max-width: 768px) {
-    .shell-sidebar {
-        width: 56px;
+    .shell-layout {
+        flex-direction: column;
     }
 
-    .shell-sidebar .shell-title {
-        justify-content: center;
-        padding: 18px 8px;
+    .shell-sidebar,
+    .shell-sidebar.collapsed {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 100;
+        width: 100%;
+        height: 58px;
+        flex-direction: row;
+        border-right: none;
+        border-top: 1px solid #30363d;
+        overflow: visible;
     }
 
-    .shell-sidebar .shell-title-logo {
-        display: block;
-    }
-
-    .shell-sidebar .shell-title-text {
+    .shell-sidebar .shell-title,
+    .shell-sidebar.collapsed .shell-title {
         display: none;
     }
 
-    .shell-sidebar .shell-menu-item {
-        justify-content: center;
-        padding: 11px 8px;
+    .shell-sidebar .shell-nav,
+    .shell-sidebar.collapsed .shell-nav {
+        flex: 1;
+        flex-direction: row;
+        padding: 0;
+        gap: 0;
     }
 
-    .shell-sidebar .menu-label {
-        display: none;
+    .shell-sidebar .shell-menu-item,
+    .shell-sidebar.collapsed .shell-menu-item {
+        flex: 1;
+        flex-direction: column;
+        justify-content: center;
+        gap: 2px;
+        padding: 6px 2px;
+        border-radius: 0;
+        font-size: 11px;
+        text-align: center;
+        line-height: 1.2;
+    }
+
+    /* 收起态的图标隐藏规则在底部tab模式下失效（图标+文字都要显示） */
+    .shell-sidebar.collapsed .menu-label {
+        display: inline;
+    }
+
+    .shell-menu-item.active {
+        background: #1f6feb33;
+        color: #58a6ff;
+    }
+
+    .shell-collapse-btn {
+        display: none; /* 底部tab无收起概念 */
+    }
+
+    /* 主内容区为底部tabbar让位（sidebar已fixed脱离文档流，iframe内容区=视口高-tabbar） */
+    .shell-main {
+        height: 100%;
+        padding-bottom: 58px;
     }
 }
