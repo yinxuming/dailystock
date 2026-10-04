@@ -3241,3 +3241,82 @@ tr.fp-cat-selected td.fp-cat-name {
     border-top: 1px solid #334155;
     background: #0f172a;
 }
+
+/* ===== TODO32 移动端适配（全部包在 @media max-width:768px 内，PC 端零影响） =====
+   实测定位（iframe 375px 真实视口 + 数据态注入）：
+   - 市场行情表 12 列被 table-layout:fixed 按百分比均分压扁（名称列仅~30px）且无横向滚动 →
+     手机上撑开 min-width + 名称/代码列 sticky（对齐自选表 browse-table 的既有 sticky 模式），
+     选择器用 #stockTable 精确锁定（fupan 三池表/晋级率表/全量评分表同为 .stock-table 类不能误伤：
+     三池表首列是checkbox列sticky会错位、窄表无需撑开）
+   - fupan三池表（12~19列）单独给 min-width 防压扁（无sticky，首列checkbox不适合吸边）
+   - 复盘四 tab / 自选表 / 设置表单 / 骨架布局实测已正常（768px 断点既有规则生效），仅微调触控目标 */
+@media (max-width: 768px) {
+
+    /* --- 市场行情表：撑开横向滚动 + 名称/代码列sticky（滚动时保持可见） --- */
+    #stockTable {
+        min-width: 860px; /* 12列均分时名称列仅30px不可读，撑开后容器横向滚动 */
+    }
+
+    /* 名称列吸边 */
+    #stockTable th.col-name,
+    #stockTable td.col-name {
+        position: sticky;
+        left: 0;
+        z-index: 5;
+        width: 96px;
+        min-width: 96px;
+    }
+
+    /* 代码列吸边（紧跟名称列右侧） */
+    #stockTable th.col-code,
+    #stockTable td.col-code {
+        position: sticky;
+        left: 96px;
+        z-index: 5;
+        width: 84px;
+        min-width: 84px;
+    }
+
+    /* sticky表头列双层吸（横向+纵向）需更高z-index压过普通表头 */
+    #stockTable th.col-name,
+    #stockTable th.col-code {
+        z-index: 15;
+    }
+
+    /* sticky td 不透明背景（默认行/斑马行/hover行三态，滚动时不透底） */
+    #stockTable td.col-name,
+    #stockTable td.col-code {
+        background: #111a2e;
+    }
+    #stockTable tbody tr:nth-child(even) td.col-name,
+    #stockTable tbody tr:nth-child(even) td.col-code {
+        background: #16203a;
+    }
+    #stockTable tbody tr:hover td.col-name,
+    #stockTable tbody tr:hover td.col-code {
+        background: #1a2947;
+    }
+
+    /* --- fupan三池表：撑开防压扁（12~19列；不sticky，首列是checkbox列） --- */
+    table.fp-pool-table {
+        min-width: 760px;
+    }
+
+    /* --- 滚动容器触摸惯性（iOS 老版本平滑滚动） --- */
+    .table-wrapper,
+    .fp-mb-wrap {
+        -webkit-overflow-scrolling: touch;
+    }
+
+    /* --- 触控目标增强（实测 date-picker 31px 偏小，统一 ≥34px） --- */
+    .date-picker {
+        padding: 8px 10px;
+        min-height: 34px;
+    }
+
+    /* --- 底部信息窄屏换行 --- */
+    .footer {
+        padding: 12px 16px;
+        line-height: 1.7;
+    }
+}
