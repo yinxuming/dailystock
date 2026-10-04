@@ -2,9 +2,9 @@
  * 统一外壳脚本
  *
  * 职责：
- * 1. 左侧菜单切换：板块资金（sector应用）/ 异动监控、每日复盘、自选、设置（stock应用）
- * 2. 双iframe架构（TODO5.3）：sector与stock各一个iframe，懒加载（首次切换才设src），
- *    切换=display显隐 → 板块资金⇄stock应用来回切换零重载，CSS/JS 完全隔离
+ * 1. 左侧菜单切换：板块资金（sector应用）/ 异动监控、每日复盘、自选、设置（stock应用）/ K线训练（ktrain应用）
+ * 2. 多iframe架构（TODO5.3）：sector、stock、ktrain 各一个iframe，懒加载（首次切换才设src），
+ *    切换=display显隐 → 三应用来回切换零重载，CSS/JS 完全隔离
  * 3. 同一应用内切换（stock四个页面）通过 postMessage 通知子应用切tab，避免整页刷新丢失状态
  * 4. 菜单选中状态持久化（localStorage），下次进入恢复
  * 5. 菜单栏展开/收起：收起后仅显示图标，状态持久化，下次进入恢复
@@ -36,6 +36,7 @@ const Shell = (function () {
 
     const frame = document.getElementById('appFrame');          // stock应用
     const frameSector = document.getElementById('appFrameSector'); // sector应用
+    const frameKtrain = document.getElementById('appFrameKtrain'); // ktrain应用（K线训练）
     const menuItems = document.querySelectorAll('.shell-menu-item');
     const sidebar = document.getElementById('shellSidebar');
     const collapseBtn = document.getElementById('btnCollapse');
@@ -86,7 +87,7 @@ const Shell = (function () {
         if (target === activeMenu) {
             // 默认菜单与恢复值相同：直接加载（switchMenu对相同菜单短路）
             const btn = document.querySelector(`.shell-menu-item[data-menu="${target}"]`);
-            if (btn) showFrame(target === 'sector' ? 'sector' : 'stock', btn.dataset.src);
+            if (btn) showFrame(appOf(target), btn.dataset.src);
         } else {
             switchMenu(target);
         }
@@ -121,26 +122,48 @@ const Shell = (function () {
     }
 
     /**
-     * 激活指定应用的iframe（懒加载：src为空时才设置），另一个隐藏
-     * @param {string} app 'stock' / 'sector'
+     * 菜单 → 应用归属
+     * @param {string} menu 菜单标识
+     * @returns {string} 'sector' / 'ktrain' / 'stock'
+     */
+    function appOf(menu) {
+        if (menu === 'sector') return 'sector';
+        if (menu === 'ktrain') return 'ktrain';
+        return 'stock';
+    }
+
+    /**
+     * 应用 → 对应iframe
+     * @param {string} app 'sector' / 'ktrain' / 'stock'
+     * @returns {HTMLIFrameElement}
+     */
+    function frameOf(app) {
+        if (app === 'sector') return frameSector;
+        if (app === 'ktrain') return frameKtrain;
+        return frame;
+    }
+
+    /**
+     * 激活指定应用的iframe（懒加载：src为空时才设置），其余隐藏
+     * @param {string} app 'stock' / 'sector' / 'ktrain'
      * @param {string} src 目标地址（懒加载首次设置src用）
      */
     function showFrame(app, src) {
-        const target = app === 'sector' ? frameSector : frame;
-        const other = app === 'sector' ? frame : frameSector;
+        const target = frameOf(app);
+        const others = [frame, frameSector, frameKtrain].filter(f => f !== target);
         if (!target.src) target.src = src;   // 懒加载：首次切换才加载
         target.style.display = '';
-        other.style.display = 'none';
+        others.forEach(f => { f.style.display = 'none'; });
     }
 
     /**
      * 切换菜单
      * 主流程：
      * 1. 更新菜单高亮与持久化 + URL hash同步（可收藏）
-     * 2. sector → 显示sector iframe（懒加载，切换无重载）
+     * 2. sector / ktrain → 显示各自iframe（懒加载，切换无重载）
      * 3. stock页面 → 显示stock iframe；iframe就绪且当前已在stock应用时 postMessage 内部切tab（无刷新），
      *    否则设置src跳转到目标页面
-     * @param {string} menu 菜单标识：sector/market/fupan/watchlist/settings
+     * @param {string} menu 菜单标识：sector/market/fupan/watchlist/settings/ktrain
      */
     function switchMenu(menu) {
         if (menu === activeMenu) return;
@@ -156,6 +179,13 @@ const Shell = (function () {
 
         if (menu === 'sector') {
             showFrame('sector', btn.dataset.src);
+            return;
+        }
+
+        // K线训练：独立iframe，切换无重载（训练过程不因切菜单而中断）
+        if (menu === 'ktrain') {
+            frameReady = false;
+            showFrame('ktrain', btn.dataset.src);
             return;
         }
 
