@@ -352,6 +352,14 @@ body.embedded .app-layout {
     border: 1px solid #334155;
 }
 
+/* TODO34：兜底——父级链任一层被宽表格撑开（flex/grid 子项 min-width 传导）时，
+   wrapper 自身也被撑到表宽 → scrollWidth==clientWidth 失去内部滚动，
+   溢出再被 .fp-content overflow-x:hidden 裁掉 → 表现即"表格只能看到前几列且无法横滑"。
+   max-width:100% 把 wrapper 锁回父级内容宽，恢复 overflow-x:auto 的内部滚动 */
+.table-wrapper {
+    max-width: 100%;
+}
+
 .stock-table {
     width: 100%;
     table-layout: fixed;
@@ -2745,6 +2753,13 @@ tr.fp-cat-selected td.fp-cat-name {
         flex: none;
         width: 100%;
     }
+
+    /* TODO34：限宽修复"表格无法横向滑动"——.fp-zt-list 是 flex column 子项，
+       会被内部 1200px 宽表格撑开（实测 1202px），wrapper 随之失去内部滚动，
+       溢出被 .fp-content overflow-x:hidden 裁掉；max-width:100% 锁回容器宽 */
+    .fp-zt-list {
+        max-width: 100%;
+    }
 }
 
 /* ============================================================
@@ -3341,10 +3356,36 @@ tr.fp-cat-selected td.fp-cat-name {
        长内容列（名称5字/成交额"7000.8万"/封板时间"09:25:00"/行业）依旧省略号截断——
        均分本身就不合理（"连板"列 2 字与"成交额"列 7 字同宽）。
        改 table-layout:auto：列宽=该列最宽内容，窄列（连板/开板）自然收窄、
-       宽列（名称/成交额/行业）自然加宽，min-width 仅作下限，总宽超出部分容器内横滚 */
+       宽列（名称/成交额/行业）自然加宽，min-width 仅作下限，总宽超出部分容器内横滚。
+       TODO34 二次修正（用户实拍）：auto 后一屏只见 5~6 列且**无法横滑**——
+       根因不在表格，在容器链：.fp-zt-list（flex column 子项）被 1200px 表格撑到 1202px，
+       wrapper 随之 1202px → scrollWidth==clientWidth 失去内部滚动，溢出被
+       .fp-content overflow-x:hidden 裁掉。修复：fp-zt-list 限宽 max-width:100%，
+       加上 .table-wrapper 全局 max-width:100% 双保险（见基础样式区）。 */
     table.fp-pool-table {
         table-layout: auto;
         min-width: 1200px;
+    }
+
+    /* 用户反馈"列要紧凑些，一眼看到有用数据"：
+       - 缩小单元格内边距（PC 8px → 手机 5px），一屏多露 1~2 列
+       - 名称列 sticky 保留但放开 min-width:92（列宽=最宽股票名，4字名 62px 即可），
+         代码列 sticky 取消（auto 布局下列宽随内容变化，left 固定偏移会错位露缝） */
+    table.fp-pool-table th,
+    table.fp-pool-table td {
+        padding: 5px 6px;
+    }
+
+    /* 复盘其余表格（方案对比/全量评分/近5日回测/板块涨跌榜）同样紧凑内边距 */
+    table.fp-cmp-table th,
+    table.fp-cmp-table td,
+    table.fp-score-table th,
+    table.fp-score-table td,
+    table.fp-bt-table th,
+    table.fp-bt-table td,
+    table.fp-board-table th,
+    table.fp-board-table td {
+        padding: 5px 7px;
     }
 
     /* 行业列基础样式 max-width:110px+ellipsis（PC 合理），手机端放开换行完整显示
@@ -3364,41 +3405,33 @@ tr.fp-cat-selected td.fp-cat-name {
         position: sticky;
         left: 0;
         z-index: 5;
-        min-width: 92px;
+        min-width: 64px; /* TODO34 紧凑化：列宽=最宽股票名（4字62px），原92px在auto布局下留大片空白 */
         text-align: left;
     }
 
-    table.fp-pool-table th:nth-child(4),
-    table.fp-pool-table td:nth-child(4) {
-        position: sticky;
-        left: 92px;
-        z-index: 5;
-        min-width: 76px;
-    }
-
-    table.fp-pool-table th:nth-child(3),
-    table.fp-pool-table th:nth-child(4) {
+    /* TODO34：代码列取消sticky——auto 布局下名称列宽随内容变化（4~6字），
+       代码列 left 固定偏移（92px）会错位露缝/重叠，保留名称列吸边即可 */
+    table.fp-pool-table th:nth-child(3) {
         z-index: 15; /* 表头双层吸 */
     }
 
     /* sticky单元格不透明背景三态（滚动不透底） */
-    table.fp-pool-table td:nth-child(3),
-    table.fp-pool-table td:nth-child(4) {
+    table.fp-pool-table td:nth-child(3) {
         background: #111a2e;
     }
-    table.fp-pool-table tbody tr:nth-child(even) td:nth-child(3),
-    table.fp-pool-table tbody tr:nth-child(even) td:nth-child(4) {
+    table.fp-pool-table tbody tr:nth-child(even) td:nth-child(3) {
         background: #16203a;
     }
-    table.fp-pool-table tbody tr:hover td:nth-child(3),
-    table.fp-pool-table tbody tr:hover td:nth-child(4) {
+    table.fp-pool-table tbody tr:hover td:nth-child(3) {
         background: #1a2947;
     }
 
     /* --- TODO33 补漏：板块涨跌榜（7列，截图实测手机上全是"酿..."省略号） --- */
-    /* 撑开横滚 + 板块名列sticky吸边（滚动时板块名保持可见） */
+    /* 撑开横滚 + 板块名列sticky吸边（滚动时板块名保持可见）。
+       TODO34 二次修正：640固定宽→91px/列短内容留白，改 auto：列宽=内容，紧凑无空白 */
     table.fp-board-table {
-        min-width: 640px;
+        table-layout: auto;
+        min-width: 0;
     }
 
     table.fp-board-table th:first-child,
@@ -3447,9 +3480,12 @@ tr.fp-cat-selected td.fp-cat-name {
     /* --- TODO34 实拍补漏：方案对比表（4列，fupan_render.js 已加 fp-cmp-table 专属类） ---
        原先无专属类走 .stock-table 默认 width:100%（375 视口 → 85px/列），
        单元格"11/15（73%）"约98px 被压出"11/15（73..."截断。
-       撑开到 560（140px/列：最长"17/25（68%）"完整单行）+ 方案名列 sticky 吸左 */
+       TODO34 二次修正（用户实拍）：560固定宽→112/140px/列，短内容"2/5"留大片空白。
+       改 table-layout:auto：列宽=各自内容（"17/25（68%）"约90px），总宽贴近内容，
+       窄屏下整表可刚好塞进 375 或仅轻微横滚，紧凑无空白 */
     table.fp-cmp-table {
-        min-width: 560px;
+        table-layout: auto;
+        min-width: 0;
     }
 
     table.fp-cmp-table th:first-child,
@@ -3476,9 +3512,11 @@ tr.fp-cat-selected td.fp-cat-name {
     }
 
     /* --- TODO33 补漏：全量评分表（7列，截图实测"晋.../龙..."列头截断） --- */
-    /* 撑开横滚 + 名称列sticky（fupan_render.js 已加 fp-score-table 专属类，避免误伤权重/方案对比等窄表） */
+    /* 撑开横滚 + 名称列sticky（fupan_render.js 已加 fp-score-table 专属类，避免误伤权重/方案对比等窄表）。
+       TODO34 二次修正：560固定宽→80px/列短内容留白，改 auto：列宽=内容，总宽贴近内容，窄屏仅轻微横滚 */
     table.fp-score-table {
-        min-width: 560px;
+        table-layout: auto;
+        min-width: 0;
     }
 
     table.fp-score-table th:first-child,
@@ -3506,8 +3544,20 @@ tr.fp-cat-selected td.fp-cat-name {
 
     /* --- TODO33 实拍补漏：回测明细表（fp-bt-table，5列，截图实测"2026-0..."日期、
        "自定义.../Top5明..."列头截断） --- */
+    /* TODO34 二次修正（用户实拍）：560固定宽→112px/列，短内容"2/5"留大片空白、行高被屏外明细列撑高。
+       改 table-layout:auto：列宽=内容；明细列限 max-width 避免被 5 个股票徽标撑到 250px+，
+       整表总宽贴近内容、窄屏仅轻微横滚，紧凑无空白 */
     table.fp-bt-table {
-        min-width: 560px;
+        table-layout: auto;
+        min-width: 0;
+    }
+
+    /* 明细列：auto 布局下 5 只股票徽标（inline-block,nowrap）会撑出 250px+ 列宽，
+       73px 时每个徽标独占一行 → 行高被撑到 120px。限宽 168 + 最小 140：
+       两个徽标约 130~140px 可并排，5 个徽标换 2~3 行，行高降至约 70px */
+    table.fp-bt-table td.fp-bt-detail {
+        max-width: 168px;
+        min-width: 140px;
     }
 
     /* 交易日列 sticky 吸左（日期 2026-09-28 10字符完整显示） */
