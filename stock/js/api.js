@@ -47,7 +47,7 @@ const StockAPI = (function () {
     // ===== 代理配置 =====
     const PROXY_CONFIG = {
         primaryUrl: 'https://vercel-proxy-p.vercel.app',
-        backupUrls: ['https://1429314495-dxb6k8oy7q.ap-beijing.tencentscf.com'],
+        backupUrls: ['https://cdgfbtemospbwxlyyxib.supabase.co/functions/v1/fund-proxy'],
         token: '',
         currentProxyIndex: -1,
         proxyFailCount: 0,
