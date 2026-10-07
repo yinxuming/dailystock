@@ -958,8 +958,12 @@ const App = (function () {
     }
 
     /**
-     * 测试代理连通性
-     * 用东方财富clist API作为测试目标
+     * 测试代理连通性（两阶段，参照 FundHome 的检测方式）
+     * 阶段① 存活探测：GET {proxy}/health —— 只验证代理进程活着，不碰任何外部数据接口
+     * 阶段② 数据链路：{proxy}/proxy?target=东财clist —— 端到端验证「代理→上游数据源」转发
+     * 两阶段分别报告：避免把「上游数据源不可达」误报成「代理不通」
+     * （实例：本机到 push2.eastmoney.com 被重置时，代理 /health 正常但转发报 502 socket hang up，
+     *   旧实现只显示「代理连通失败: HTTP 502」，无法区分是代理问题还是上游问题）
      */
     async function testProxyConnection() {
         const btnTest = document.getElementById('btnTestProxy');
@@ -972,27 +976,48 @@ const App = (function () {
         btnTest.disabled = true;
         btnTest.textContent = '测试中...';
         resultDiv.style.display = 'block';
-        resultText.textContent = '正在测试代理连通性...';
-        resultText.style.color = '#94a3b8';
 
         try {
-            // 用clist API作为测试目标（轻量级请求）
+            const proxyUrl = StockAPI.getProxyConfig().primaryUrl;
+            if (!proxyUrl) {
+                resultText.textContent = '未配置代理地址';
+                resultText.style.color = '#ef4444';
+                return;
+            }
+
+            // ===== 阶段①：代理存活探测（/health）=====
+            resultText.textContent = '① 探测代理存活（/health）...';
+            resultText.style.color = '#94a3b8';
+            let aliveMs;
+            try {
+                const t0 = Date.now();
+                await fetchProxyHealth(proxyUrl);
+                aliveMs = Date.now() - t0;
+            } catch (e) {
+                resultText.textContent = `① 代理存活 ✗（/health ${e.message}）— 代理进程未启动或地址错误`;
+                resultText.style.color = '#ef4444';
+                return;
+            }
+
+            // ===== 阶段②：数据链路端到端（代理 → 东财 clist）=====
+            resultText.textContent = `① 代理存活 ✓（${aliveMs}ms）  ② 测试数据链路（东财）...`;
             const testUrl = 'https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=1&po=1&np=1&ut=b2884a393a59ad64002292a3e90d46a5&fltt=2&invt=2&fid=f3&fs=m:1+t:2&fields=f12,f14&_t=' + Date.now();
-
             const startTime = Date.now();
-            const data = await fetchProxyTest(testUrl);
-            const elapsed = Date.now() - startTime;
-
-            if (data && data.data) {
-                resultText.textContent = `代理连通成功！耗时 ${elapsed}ms`;
-                resultText.style.color = '#10b981';
-            } else {
-                resultText.textContent = `代理返回数据异常，耗时 ${elapsed}ms`;
+            try {
+                const data = await fetchProxyTest(testUrl);
+                const elapsed = Date.now() - startTime;
+                if (data && data.data) {
+                    resultText.textContent = `① 代理存活 ✓（${aliveMs}ms）  ② 数据链路 ✓ 东财接口正常（${elapsed}ms）`;
+                    resultText.style.color = '#10b981';
+                } else {
+                    resultText.textContent = `① 代理存活 ✓（${aliveMs}ms）  ② 代理返回数据异常（${elapsed}ms）`;
+                    resultText.style.color = '#f59e0b';
+                }
+            } catch (e) {
+                const elapsed = Date.now() - startTime;
+                resultText.textContent = `① 代理存活 ✓（${aliveMs}ms）  ② 数据链路 ✗ ${e.message}（${elapsed}ms）— 代理本身正常，是代理→东财的上游转发失败（换网络或稍后重试）`;
                 resultText.style.color = '#f59e0b';
             }
-        } catch (error) {
-            resultText.textContent = '代理连通失败: ' + error.message;
-            resultText.style.color = '#ef4444';
         } finally {
             btnTest.disabled = false;
             btnTest.textContent = '测试代理';
@@ -1000,12 +1025,39 @@ const App = (function () {
     }
 
     /**
+     * 探测代理存活：GET {proxy}/health（只验证代理进程活着，不访问外部数据接口）
+     * @param {string} proxyUrl 代理地址
+     * @param {number} attempt 当前重试次数（serverless 冷启动首次可能超时，自动重试一次加大超时）
+     */
+    async function fetchProxyHealth(proxyUrl, attempt = 0) {
+        const base = proxyUrl.replace(/\/+$/, '');
+        const timeoutMs = attempt > 0 ? 20000 : 8000;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            const resp = await fetch(base + '/health', { signal: controller.signal });
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            const data = await resp.json();
+            if (data && data.status === 'ok') return data;
+            throw new Error('响应异常');
+        } catch (e) {
+            if (e.name === 'AbortError') {
+                if (attempt === 0) return fetchProxyHealth(proxyUrl, 1); // 冷启动重试（20s）
+                throw new Error('超时');
+            }
+            throw e;
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    /**
      * 通过代理发送测试请求
+     * 失败时读取代理返回的错误详情（proxy-apps 约定 502 响应体为 {success:false, error, message}）
      */
     async function fetchProxyTest(targetUrl) {
         const proxyConfig = StockAPI.getProxyConfig();
         const proxyUrl = proxyConfig.primaryUrl;
-        if (!proxyUrl) throw new Error('未配置代理地址');
 
         const base = proxyUrl.replace(/\/+$/, '');
         const fullUrl = base + '/proxy?target=' + encodeURIComponent(targetUrl);
@@ -1014,7 +1066,15 @@ const App = (function () {
         if (proxyConfig.token) headers['X-Proxy-Token'] = proxyConfig.token;
 
         const resp = await fetch(fullUrl, { headers });
-        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        if (!resp.ok) {
+            let detail = '';
+            try {
+                const body = await resp.json();
+                if (body && body.message) detail = '：' + body.message;
+                else if (body && body.error) detail = '：' + body.error;
+            } catch (e) { /* 非 JSON 响应，忽略详情 */ }
+            throw new Error('HTTP ' + resp.status + detail);
+        }
         return await resp.json();
     }
 
