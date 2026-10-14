@@ -71,6 +71,53 @@ const FupanRenderer = (function () {
     // 大板块兜底名（未匹配到任何子行业关键词的个股归入）
     const SECTOR_DEFAULT = '其他';
 
+    // ===== TODO36：分类粒度可调（粗=原10大板块 / 细=拆分"科技成长""高端制造"） =====
+    // 痛点：粗粒度下 PCB（东财行业"元件"）与 AI应用（"软件开发/IT服务"）同归"科技成长"，
+    //       涨停池分类栏看不出结构差异；细粒度按产业链拆分，但整体仍保持"适度细"（16类）。
+    // 细粒度拆分定义：只列出被拆分的子类，其余大板块原样沿用（避免关键词重复维护两遍）
+    const SECTOR_FINE_SPLIT = {
+        // 科技成长 → 4 类
+        '半导体与元件': ['半导体', '芯片', '集成电路', '存储器', '分立器件', '元件', 'PCB', '印制电路', '被动元件', '电子化学品'],
+        '消费电子': ['消费电子', '光学光电子', '光电子', '电子终端', '显示器件', 'LED', '液晶', '面板', '电子'],
+        '软件与AI': ['软件开发', 'IT服务', '计算机设备', '计算机', '互联网服务', '互联网电商', '互联网', '数据处理', '云计算', '人工智能', '大数据', '软件'],
+        '通信': ['通信设备', '通信服务', '光通信', '光模块', '运营商'],
+        '传媒游戏': ['游戏', '影视', '院线', '出版', '广告', '营销', '传媒', '数字媒体', '文化传媒', '电视', '广播', '动漫'],
+        // 高端制造 → 3 类
+        '新能源': ['电源设备', '电网设备', '光伏设备', '风电设备', '电池', '新能源', '储能', '充电桩', '逆变器'],
+        '汽车': ['汽车零部', '汽车整车', '商用车', '摩托车', '汽车服务', '汽车'],
+        '机械军工': ['专用设备', '通用设备', '自动化', '机器人', '工程机械', '仪器仪表', '轨交', '电机', '航天', '航空装备', '军工', '地面兵装', '航海装备', '船舶']
+    };
+    /**
+     * 细粒度完整映射：8 个细分类在前 + 未拆分的 8 个大板块原样保留
+     * 插入顺序即匹配优先级：细分类必须先于未拆分类，否则"消费电子"会被大消费的
+     * 泛化词"消费"抢先匹配；细分类内部"半导体与元件"（含"电子化学品"专有关键词）
+     * 先于含泛化词"电子"的"消费电子"
+     */
+    const SECTOR_FINE = (function () {
+        const fine = {};
+        Object.assign(fine, SECTOR_FINE_SPLIT);
+        for (const [sector, keys] of Object.entries(INDUSTRY_TO_SECTOR)) {
+            if (sector === '科技成长' || sector === '高端制造') continue; // 被细粒度子类替代
+            fine[sector] = keys;
+        }
+        return fine;
+    })();
+    /** 粒度档位（coarse=粗 / fine=细） */
+    const SECTOR_GRANULARITY = ['coarse', 'fine'];
+    /** 粒度持久化 key（TODO36：用户选择后记忆，下次进入自动恢复） */
+    const SECTOR_GRAN_KEY = 'fupan_zt_sector_gran';
+    /** 默认粒度：细（原粗粒度被反馈"科技成长"等太粗，默认直接给拆分视图） */
+    const DEFAULT_SECTOR_GRAN = 'fine';
+
+    /**
+     * 当前分类粒度（持久化，非法值回落默认）
+     * @returns {string} 'coarse' | 'fine'
+     */
+    function sectorGranularity() {
+        const v = FupanData.getSetting(SECTOR_GRAN_KEY, DEFAULT_SECTOR_GRAN);
+        return SECTOR_GRANULARITY.includes(v) ? v : DEFAULT_SECTOR_GRAN;
+    }
+
     // ===== 通用小工具 =====
 
     /**
@@ -98,13 +145,18 @@ const FupanRenderer = (function () {
 
     /**
      * 子行业 → 大板块归并（涨停池分类栏口径，参照同花顺涨停池）
+     * TODO36：granularity='fine' 走细粒度映射（科技成长/高端制造已拆分），
+     *        不传则取用户持久化的粒度档位
      * @param {string} industry 东财细分子行业名（如"饲料"）
+     * @param {string} [granularity] 'coarse' | 'fine'（缺省读持久化设置）
      * @returns {string} 大板块名（未匹配到任一关键词归入"其他"）
      */
-    function bigSectorOf(industry) {
+    function bigSectorOf(industry, granularity) {
         const ind = String(industry || '').trim();
         if (!ind) return SECTOR_DEFAULT;
-        for (const [sector, keys] of Object.entries(INDUSTRY_TO_SECTOR)) {
+        const gran = SECTOR_GRANULARITY.includes(granularity) ? granularity : sectorGranularity();
+        const map = gran === 'fine' ? SECTOR_FINE : INDUSTRY_TO_SECTOR;
+        for (const [sector, keys] of Object.entries(map)) {
             for (const k of keys) {
                 if (ind.includes(k)) return sector;
             }
@@ -179,10 +231,11 @@ const FupanRenderer = (function () {
     /**
      * 个股 → 大板块归并（涨停池条目分类用）
      * @param {Object} s 池条目（含 industry 字段）
+     * @param {string} [granularity] 'coarse' | 'fine'（缺省读持久化设置）
      * @returns {string} 大板块名
      */
-    function stockSector(s) {
-        return bigSectorOf(s && s.industry);
+    function stockSector(s, granularity) {
+        return bigSectorOf(s && s.industry, granularity);
     }
 
     /**
@@ -876,7 +929,16 @@ const FupanRenderer = (function () {
             </div>`;
 
         // 2. 池子：左分类栏 + 右列表（列表内容由bindPools按持久化状态填充）
+        // TODO36：分类粒度切换（粗/细，持久化记忆）；默认细粒度（科技成长/高端制造已拆分）
+        const gran = sectorGranularity();
         const poolHtml = `
+            <div class="fp-board-toolbar fp-gran-toolbar">
+                <span class="fp-gran-label">分类粒度</span>
+                <div class="fp-board-switch">
+                    <button class="sub-tab${gran === 'coarse' ? ' active' : ''}" data-fp-gran="coarse" title="粗粒度：十大板块（科技成长/高端制造等合并展示）">粗</button>
+                    <button class="sub-tab${gran === 'fine' ? ' active' : ''}" data-fp-gran="fine" title="细粒度：科技成长拆分为 半导体与元件/消费电子/软件与AI/通信/传媒游戏，高端制造拆分为 新能源/汽车/机械军工">细</button>
+                </div>
+            </div>
             <div class="fp-zt-split">
                 <div class="fp-cat-bar" data-fp-cat-bar>${catBarTable(day)}</div>
                 <div class="fp-zt-list" data-fp-pool-list></div>
@@ -1035,6 +1097,31 @@ const FupanRenderer = (function () {
             const tr = td.closest('tr[data-cat]');
             if (!tr) return;
             select(tr.dataset.cat, td.dataset.pool || 'zt');
+        });
+
+        /**
+         * 重建分类栏并按持久化状态恢复选中（TODO36：粒度切换后调用）
+         * 分类在新粒度下不存在时回退"全部"（如粗粒度选的"科技成长"切到细粒度后无该类）
+         */
+        const rebuildCatBar = () => {
+            bar.innerHTML = catBarTable(day);
+            const c = FupanData.getSetting(ZT_CAT_KEY, '__all__');
+            const p0 = FupanData.getSetting(ZT_POOL_KEY, 'zt');
+            const p = ['zt', 'dt', 'zb'].includes(p0) ? p0 : 'zt';
+            const exists = c === '__all__'
+                || Array.from(bar.querySelectorAll('tr[data-cat]')).some(tr => tr.dataset.cat === c);
+            select(exists ? c : '__all__', p);
+        };
+
+        // TODO36：分类粒度切换（持久化记忆，切换后重建分类栏与列表）
+        container.querySelectorAll('[data-fp-gran]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const g = btn.dataset.fpGran;
+                if (!SECTOR_GRANULARITY.includes(g) || g === sectorGranularity()) return;
+                FupanData.setSetting(SECTOR_GRAN_KEY, g);
+                container.querySelectorAll('[data-fp-gran]').forEach(b => b.classList.toggle('active', b === btn));
+                rebuildCatBar();
+            });
         });
 
         // 恢复持久化状态（分类不存在时回退全部）
@@ -3114,7 +3201,20 @@ const FupanRenderer = (function () {
         renderMarket,
         renderSectors,
         renderZT,
-        renderScore
+        renderScore,
+        // 供单元测试暴露内部纯逻辑（TODO36 分类粒度映射）
+        _internals: {
+            bigSectorOf,
+            stockSector,
+            sectorGranularity,
+            INDUSTRY_TO_SECTOR,
+            SECTOR_FINE,
+            SECTOR_FINE_SPLIT,
+            SECTOR_DEFAULT,
+            SECTOR_GRANULARITY,
+            SECTOR_GRAN_KEY,
+            DEFAULT_SECTOR_GRAN
+        }
     };
 })();
 
