@@ -5,6 +5,10 @@
  * 1. 拉取后端采集落盘的复盘JSON（GitHub Pages静态部署，同源fetch，无需代理）
  *    - data/fupan/summary.json       多日汇总（趋势图数据源）
  *    - data/fupan/days/YYYYMMDD.json 单日完整数据（四子tab数据源）
+ * 2. 本地缓存缺失兜底：本地 fetch 404（多为本地调试未同步最新采集，如仅到 2026-09-10）
+ *    时自动回退到线上 GitHub Pages 镜像（remoteBase，经代理解决跨域 CORS），
+ *    使本地调试也能拿到每日更新的涨停池/复盘数据，避免集合竞价/复盘"没数据"。
+ *    镜像基址可由 localStorage 'fupan_remote_base' 覆盖。
  * 2. 缓存策略：
  *    - 历史交易日数据（< 今天）：localStorage永久缓存（历史数据不变）
  *    - 当日数据：当日缓存（复用StockAPI.getDailyCache，当日CI更新后次日自动失效）
@@ -23,6 +27,18 @@ const FupanData = (function () {
     // 数据文件基础路径（本地开发与GitHub Pages部署同为 stock/ 下相对路径）
     const DATA_BASE = 'data/fupan/';
     const SUMMARY_URL = DATA_BASE + 'summary.json';
+
+    // 线上 GitHub Pages 镜像基址（本地缓存缺失时的兜底数据源，经代理解决跨域 CORS）
+    // 本地调试时 fupan 缓存往往滞后（如仅到 2026-09-10），而线上镜像每日更新；
+    // 本地 404 时自动回退到此地址拉取，避免集合竞价/复盘因缺缓存而"没数据"。
+    // 可由 localStorage 键 'fupan_remote_base' 覆盖（便于切换镜像或私有部署）。
+    function remoteBase() {
+        try {
+            const v = localStorage.getItem('fupan_remote_base');
+            if (v) return v.replace(/\/+$/, '') + '/';
+        } catch (e) { /* 忽略 */ }
+        return 'https://yinxuming.github.io/dailystock/stock/data/fupan/';
+    }
 
     // 缓存key
     const SUMMARY_CACHE_KEY = 'fupan_summary';
@@ -87,7 +103,14 @@ const FupanData = (function () {
                 return cached;
             }
         }
-        const data = await fetchJson(SUMMARY_URL);
+        let data;
+        try {
+            data = await fetchJson(SUMMARY_URL);
+        } catch (localErr) {
+            // 本地 summary 缺失 → 回退线上镜像（经代理解决 CORS）
+            console.warn('本地 summary 缺失，回退线上镜像:', localErr && localErr.message);
+            data = await StockAPI.request(remoteBase() + 'summary.json');
+        }
         if (!data || !Array.isArray(data.days)) throw new Error('summary数据格式异常');
         summaryCache = data;
         StockAPI.setDailyCache(SUMMARY_CACHE_KEY, data);
@@ -127,7 +150,14 @@ const FupanData = (function () {
 
         const task = (async () => {
             try {
-                const data = await fetchJson(DATA_BASE + 'days/' + toCompact(dateStr) + '.json');
+                let data;
+                try {
+                    data = await fetchJson(DATA_BASE + 'days/' + toCompact(dateStr) + '.json');
+                } catch (localErr) {
+                    // 本地缓存缺失（多为本地调试未同步最新采集）→ 回退线上 GitHub Pages 镜像（经代理解决 CORS）
+                    console.warn('本地复盘缓存缺失，回退线上镜像:', dateStr, localErr && localErr.message);
+                    data = await StockAPI.request(remoteBase() + 'days/' + toCompact(dateStr) + '.json');
+                }
                 if (!data || !data.date) throw new Error('复盘数据格式异常: ' + dateStr);
                 dayCache.set(dateStr, data);
                 // 落盘缓存

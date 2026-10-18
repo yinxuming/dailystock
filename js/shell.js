@@ -25,8 +25,8 @@ const Shell = (function () {
     // 菜单收起状态持久化key
     const COLLAPSED_KEY = 'dailystock_menu_collapsed';
 
-    // stock应用四个页面（共用appFrame）
-    const STOCK_PAGES = ['market', 'fupan', 'watchlist', 'settings'];
+    // stock应用页面（共用appFrame）
+    const STOCK_PAGES = ['market', 'fupan', 'callauction', 'watchlist', 'settings'];
 
     // 当前激活菜单（默认板块资金）
     let activeMenu = 'sector';

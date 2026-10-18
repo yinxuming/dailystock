@@ -636,6 +636,10 @@ const App = (function () {
         if (tab === 'fupan' && typeof Fupan !== 'undefined') {
             Fupan.onTabActivated();
         }
+        // 集合竞价tab激活时通知集合竞价模块（首次进入懒加载数据）
+        if (tab === 'callauction' && typeof CA !== 'undefined') {
+            CA.onTabActivated();
+        }
         // 记住最后一次选中的tab
         try {
             localStorage.setItem(ACTIVE_TAB_KEY, tab);
@@ -722,7 +726,7 @@ const App = (function () {
      * @returns {{page: string, sub: string|null, date: string|null}}
      */
     function parseRoute() {
-        const validTabs = ['market', 'fupan', 'watchlist', 'settings'];
+        const validTabs = ['market', 'fupan', 'callauction', 'watchlist', 'settings'];
         const params = new URLSearchParams(window.location.search);
 
         let page = params.get('page');
@@ -762,7 +766,7 @@ const App = (function () {
      */
     function initTabs() {
         const route = parseRoute();
-        const validTabs = ['market', 'fupan', 'watchlist', 'settings'];
+        const validTabs = ['market', 'fupan', 'callauction', 'watchlist', 'settings'];
 
         let saved = 'market';
         if (route.page && validTabs.includes(route.page)) {
@@ -858,7 +862,7 @@ const App = (function () {
         window.addEventListener('message', (event) => {
             const data = event.data;
             if (data && data.type === 'dailystock:navigate' &&
-                ['market', 'fupan', 'watchlist', 'settings'].includes(data.page)) {
+                ['market', 'fupan', 'callauction', 'watchlist', 'settings'].includes(data.page)) {
                 switchTab(data.page);
                 // runtime 子tab跳转：fupan 在已激活后通过模块自身 API 切
                 if (data.sub) {

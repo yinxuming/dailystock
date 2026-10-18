@@ -3273,6 +3273,13 @@ tr.fp-cat-selected td.fp-cat-name {
     gap: 4px;
     flex-shrink: 0;
 }
+/* 列顺序↑/↓按钮组（TODO37） */
+.fp-col-order {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+}
 .fp-col-wbtn {
     width: 20px;
     height: 20px;

@@ -1443,6 +1443,8 @@ const StockAPI = (function () {
         getDailyCache,
         setDailyCache,
         todayStr,
+        // 原始代理请求（集合竞价等模块需要访问未封装的接口，统一复用节流/代理切换逻辑）
+        request,
         // ===== 内部纯函数（仅供Node测试使用，业务代码勿调用） =====
         _internals: {
             mergeKlinesByDate,

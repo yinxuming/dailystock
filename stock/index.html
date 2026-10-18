@@ -7,7 +7,8 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>股票严重异动监控系统</title>
-    <link rel="stylesheet" href="css/style.css?v=22">
+    <link rel="stylesheet" href="css/style.css?v=23">
+    <link rel="stylesheet" href="call_auction/ca.css?v=2">
 </head>
 <body>
     <div class="app-layout">
@@ -17,6 +18,7 @@
             <nav class="sidebar-nav">
                 <button class="menu-item active" data-tab="market" title="市场行情异动监控">市场行情</button>
                 <button class="menu-item" data-tab="fupan" title="每日复盘：大盘/板块轮动/涨跌停/评分预测">每日复盘</button>
+                <button class="menu-item" data-tab="callauction" title="集合竞价：9:25 后查看当日竞价评级与异动">集合竞价</button>
                 <button class="menu-item" data-tab="watchlist" title="自选股异动监控与浏览">自选</button>
                 <button class="menu-item" data-tab="settings" title="系统设置">设置</button>
             </nav>
@@ -143,7 +145,65 @@
                 </div>
             </section>
 
-            <!-- ===== 菜单3：自选（TODO16.1去异动tab仅浏览视图；TODO16.2分组栏） ===== -->
+            <!-- ===== 菜单3：集合竞价（9:25 后查看当日竞价评级与异动） ===== -->
+            <section id="page-callauction" class="page">
+                <header class="page-header">
+                    <h2 class="page-title">集合竞价</h2>
+                    <div class="ca-hint">竞价评级与异动类型依据 9:25 撮合量价特征推断，异动说明列给出触发判定的具体数值</div>
+                    <div class="header-actions">
+                        <span id="caMeta" class="data-date"></span>
+                        <!-- TODO38.3：竞价日期选择，查看历史交易日竞价（缓存优先） -->
+                        <label class="ca-date-label">竞价日期：
+                            <input type="date" id="caDatePicker" class="date-picker" title="选择竞价日期（默认最近一个已完成竞价的交易日）">
+                        </label>
+                        <div id="caTabs" class="ca-tabs">
+                            <button class="ca-tab active" data-ca-scope="zt">昨日涨停</button>
+                            <button class="ca-tab" data-ca-scope="wl">全部自选</button>
+                        </div>
+                        <span id="caGroupTabs" class="ca-tabs"></span>
+                        <!-- TODO38.3：同步自选到定时任务预设（生成带 sync-ca-watchlist 标签的 Issue，协作者审批触发） -->
+                        <button id="btnCaSyncWl" class="btn" title="将自选股票同步到定时任务预设（生成 Issue 到仓库审批）">同步自选</button>
+                        <button id="btnCaRefresh" class="btn btn-primary" title="清除当日竞价缓存并重新采集">刷新</button>
+                    </div>
+                </header>
+
+                <div class="ca-top">
+                    <div id="caNotice" class="ca-notice" style="display:none"></div>
+                    <div id="caSummary" class="ca-summary"></div>
+                    <div id="caSector" class="ca-sector" style="display:none"></div>
+                    <div id="caFilterBar" class="ca-filter-bar"></div>
+                </div>
+
+                <div id="caLoading" class="loading" style="display:none;">
+                    <div class="loading-spinner"></div>
+                    <span id="caLoadingText">正在加载集合竞价数据...</span>
+                </div>
+
+                <div id="caError" class="error" style="display:none;">
+                    <span id="caErrorText"></span>
+                    <button id="btnCaRetry" class="btn btn-primary btn-sm">重试</button>
+                </div>
+
+                <section class="table-section">
+                    <div class="table-wrapper ca-table-wrapper">
+                        <table id="caTable" class="stock-table ca-table">
+                            <thead id="caTableHead"></thead>
+                            <tbody id="caTableBody"></tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <!-- TODO39.2：竞价评分方案回溯区（默认折叠，方案 tab + 方案对比 + 近5日回测） -->
+                <section id="caScheme" class="ca-scheme" style="display:none">
+                    <button id="caSchemeToggle" class="ca-scheme-toggle" type="button">
+                        <span class="ca-scheme-arrow">&#9654;</span>
+                        <span>评分方案回溯（TODO39.2：昨日最准/3日/5日/初始，阈值自动修正）</span>
+                    </button>
+                    <div id="caSchemeBody" class="ca-scheme-body" style="display:none"></div>
+                </section>
+            </section>
+
+            <!-- ===== 菜单4：自选（TODO16.1去异动tab仅浏览视图；TODO16.2分组栏） ===== -->
             <section id="page-watchlist" class="page">
                 <header class="page-header">
                     <h2 class="page-title">自选</h2>
@@ -313,7 +373,7 @@
     <script src="js/calculator.js?v=20"></script>
     <script src="js/stock_search.js?v=1"></script>
     <script src="js/tradingCalendar.js?v=11"></script>
-    <script src="js/table_cols.js?v=1"></script>
+    <script src="js/table_cols.js?v=2"></script>
     <script src="js/renderer.js?v=23"></script>
     <script src="js/wl_group.js?v=3"></script>
     <script src="js/watchlist.js?v=7"></script>
@@ -322,6 +382,11 @@
     <script src="js/fupan_charts.js?v=3"></script>
     <script src="js/fupan_render.js?v=14"></script>
     <script src="js/fupan.js?v=4"></script>
+    <script src="call_auction/ca_data.js?v=2"></script>
+    <script src="call_auction/ca_rating.js?v=2"></script>
+    <script src="call_auction/ca_scheme.js?v=1"></script>
+    <script src="call_auction/ca_render.js?v=1"></script>
+    <script src="call_auction/ca.js?v=2"></script>
     <script src="js/main.js?v=25"></script>
 </body>
 </html>
