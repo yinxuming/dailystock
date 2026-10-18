@@ -2957,11 +2957,17 @@ const FupanRenderer = (function () {
 
             box.innerHTML = `<div class="fp-empty">营业部缓存加载中...</div>`;
 
-            // 加载 departments.json
+            // 加载 departments.json（GitHub Pages 静态文件同源直连：带 stock/ 前缀路径优先，本地路径兜底）
             try {
-                const resp = await fetch('data/fupan/departments.json?_=' + Date.now());
-                if (!resp.ok) throw new Error('HTTP ' + resp.status);
-                const obj = await resp.json();
+                let obj = null;
+                for (const url of ['stock/data/fupan/departments.json', 'data/fupan/departments.json']) {
+                    try {
+                        const resp = await fetch(url + '?_=' + Date.now());
+                        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                        obj = await resp.json();
+                        break;
+                    } catch (e) { /* 尝试下一个路径 */ }
+                }
                 depts = (obj && obj.depts) || [];
             } catch (e) {
                 depts = [];  // 无缓存时空数组，仍显示今日龙虎榜

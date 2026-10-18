@@ -1,0 +1,567 @@
+/* ===== 集合竞价页面样式（深色主题，与主应用一致） ===== */
+
+/* ---- 页头说明 ---- */
+.ca-hint {
+    flex: 1;
+    min-width: 0;
+    padding-left: 16px;
+    font-size: 11px;
+    color: #64748b;
+    line-height: 1.5;
+}
+
+/* ---- 概览区容器（与 table-section 左右内边距对齐） ---- */
+.ca-top {
+    padding: 0 32px;
+}
+
+/* ---- 提示条 ---- */
+.ca-notice {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 12px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    line-height: 1.6;
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    color: #fbbf24;
+}
+
+.ca-notice.info {
+    background: rgba(59, 130, 246, 0.1);
+    border-color: rgba(59, 130, 246, 0.35);
+    color: #93c5fd;
+}
+
+/* ---- 情绪概览 KPI ---- */
+.ca-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.ca-kpi {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 8px 10px;
+    min-width: 0;
+}
+
+.ca-kpi-v {
+    font-size: 17px;
+    font-weight: 700;
+    color: #e2e8f0;
+    line-height: 1.3;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ca-kpi-l {
+    font-size: 11px;
+    color: #94a3b8;
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ---- 板块竞价强度面板 ---- */
+.ca-sector {
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 8px;
+}
+
+.ca-sec-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #cbd5e1;
+    margin-bottom: 8px;
+}
+
+.ca-sec-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 8px;
+}
+
+.ca-sec {
+    background: #0f172a;
+    border: 1px solid #243449;
+    border-radius: 6px;
+    padding: 6px 8px;
+}
+
+.ca-sec-head {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.ca-sec-head b {
+    font-size: 13px;
+    color: #e2e8f0;
+}
+
+.ca-sec-n {
+    font-size: 11px;
+    color: #64748b;
+}
+
+.ca-sec-gap {
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.ca-sec-r {
+    margin-left: auto;
+    font-size: 11px;
+    color: #94a3b8;
+}
+
+.ca-sec-codes {
+    margin-top: 4px;
+    font-size: 11px;
+    color: #94a3b8;
+    line-height: 1.5;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ---- hover 卡 AI 建议 ---- */
+.ca-tip-advice {
+    margin: 8px 0;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    color: #cbd5e1;
+    line-height: 1.65;
+    font-size: 11.5px;
+}
+
+.ca-tip-advice b {
+    color: #93c5fd;
+}
+
+/* ---- 筛选条 ---- */
+.ca-filter-bar {
+    margin-bottom: 10px;
+    padding: 8px 10px;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 8px;
+}
+
+/* ---- 范围切换 tab（替换原下拉框，对齐同花顺底部 tab 风格） ---- */
+.ca-tabs {
+    display: inline-flex;
+    gap: 4px;
+}
+
+/* 竞价日期标签（对齐同花顺/复盘页的日期选择入口，提升可见性） */
+.ca-date-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+    color: #cbd5e1;
+    font-size: 13px;
+}
+
+.ca-tab {
+    padding: 5px 12px;
+    border-radius: 6px;
+    border: 1px solid #334155;
+    background: #0f172a;
+    color: #94a3b8;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+}
+
+.ca-tab:hover {
+    border-color: #475569;
+    color: #cbd5e1;
+}
+
+.ca-tab.active {
+    background: rgba(59, 130, 246, 0.18);
+    border-color: #3b82f6;
+    color: #93c5fd;
+    font-weight: 600;
+}
+
+.ca-filter-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+
+.ca-filter-row + .ca-filter-row {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed #334155;
+}
+
+.ca-filter-label {
+    font-size: 11px;
+    color: #64748b;
+    margin-right: 4px;
+    flex: 0 0 auto;
+    min-width: 56px;
+}
+
+.ca-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 9px;
+    border-radius: 12px;
+    border: 1px solid #334155;
+    background: #0f172a;
+    color: #cbd5e1;
+    font-size: 12px;
+    line-height: 1.5;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+    white-space: nowrap;
+}
+
+.ca-chip:hover {
+    border-color: #475569;
+    color: #e2e8f0;
+}
+
+.ca-chip.active {
+    background: rgba(59, 130, 246, 0.18);
+    border-color: #3b82f6;
+    color: #93c5fd;
+}
+
+.ca-chip-n {
+    font-size: 10px;
+    color: #64748b;
+    padding-left: 2px;
+}
+
+.ca-chip.active .ca-chip-n {
+    color: #93c5fd;
+}
+
+.ca-chip-clear {
+    margin-left: auto;
+    border-color: rgba(239, 68, 68, 0.4);
+    color: #f87171;
+}
+
+.ca-chip-clear:hover {
+    border-color: #ef4444;
+    color: #fca5a5;
+}
+
+/* ---- 结果表 ---- */
+/* TODO38.1：去掉内部纵向滚动（原 overflow-y+max-height 与页面外层滚动形成双滚动条），
+   纵向滚动统一交给页面最外层，此处只保留横向滚动 */
+.ca-table-wrapper {
+    overflow-x: auto;
+    border: 1px solid #334155;
+    border-radius: 8px;
+}
+
+/* 列多且不固定宽度：改为内容自适应 + 横向滚动 */
+.stock-table.ca-table {
+    table-layout: auto;
+    width: max-content;
+    min-width: 100%;
+}
+
+.ca-table th,
+.ca-table td {
+    padding: 7px 8px;
+    font-variant-numeric: tabular-nums;
+}
+
+.stock-table.ca-table th.sortable {
+    cursor: pointer;
+}
+
+.stock-table.ca-table th.sortable:hover {
+    color: #e2e8f0;
+    background: #243449;
+}
+
+/* 前 3 列冻结，横向滚动时保持可见（left 偏移由渲染层按实际列宽写入 CSS 变量） */
+.ca-table th:nth-child(1), .ca-table td:nth-child(1) { position: sticky; left: 0; z-index: 3; }
+.ca-table th:nth-child(2), .ca-table td:nth-child(2) { position: sticky; left: var(--ca-w0, 70px); z-index: 3; }
+.ca-table th:nth-child(3), .ca-table td:nth-child(3) { position: sticky; left: var(--ca-w1, 140px); z-index: 3; }
+.ca-table thead th:nth-child(-n+3) { z-index: 12; }
+.ca-table tbody td:nth-child(-n+3) { background: #0f172a; }
+.ca-table tbody tr:nth-child(even) td:nth-child(-n+3) { background: #131f33; }
+.ca-table tbody tr:hover td:nth-child(-n+3) { background: #1c2b42; }
+
+.ca-col-time { width: 70px; color: #94a3b8; font-size: 11px; }
+.ca-col-code { width: 68px; color: #94a3b8; }
+.ca-col-name { width: 84px; font-weight: 600; color: #e2e8f0; }
+.ca-col-type { min-width: 78px; }
+.ca-col-desc { min-width: 300px; max-width: 420px; text-align: left !important; white-space: normal; color: #94a3b8; font-size: 11px; line-height: 1.5; }
+.ca-col-rating { min-width: 74px; }
+
+.ca-empty {
+    padding: 40px 0 !important;
+    color: #64748b;
+    text-align: center;
+}
+
+/* 涨跌配色：红涨绿跌 */
+.ca-up { color: #ef4444 !important; font-weight: 600; }
+.ca-down { color: #22c55e !important; font-weight: 600; }
+
+/* 异动类型配色 */
+.ca-type { font-size: 11px; font-weight: 600; }
+.ca-type-up { color: #f87171; }
+.ca-type-down { color: #4ade80; }
+.ca-type-warn { color: #fbbf24; }
+
+/* 竞价评级徽标 */
+.ca-rating {
+    font-weight: 700;
+    font-size: 12px;
+    cursor: help;
+    position: relative;
+}
+
+.ca-rating-bull { color: #ef4444; }
+.ca-rating-bear { color: #22c55e; }
+.ca-rating-mix { color: #f59e0b; }
+.ca-rating-wait { color: #94a3b8; }
+
+/* TODO39.1：竞价评分列配色（对齐评级档位：可参与=红/观察=黄/淘汰=灰） */
+.ca-score { font-weight: 700; }
+.ca-score-high { color: #ef4444; }
+.ca-score-mid { color: #f59e0b; }
+.ca-score-low { color: #94a3b8; }
+
+/* ===== TODO39.2：评分方案回溯区 ===== */
+.ca-scheme {
+    margin: 16px 0 8px;
+    background: #0f172a;
+    border: 1px solid #1e293b;
+    border-radius: 10px;
+    overflow: hidden;
+}
+.ca-scheme-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 12px 16px;
+    background: transparent;
+    border: none;
+    color: #cbd5e1;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: left;
+}
+.ca-scheme-toggle:hover { color: #e2e8f0; }
+.ca-scheme-arrow { color: #64748b; font-size: 11px; }
+.ca-scheme-body { padding: 4px 16px 16px; }
+.ca-scheme-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.ca-scheme-tab {
+    padding: 6px 12px;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    color: #94a3b8;
+    font-size: 12px;
+    cursor: pointer;
+}
+.ca-scheme-tab:hover { color: #e2e8f0; border-color: #475569; }
+.ca-scheme-tab.active { background: #1d4ed8; border-color: #3b82f6; color: #fff; }
+.ca-scheme-eq { margin-left: 4px; color: #f59e0b; font-size: 11px; }
+.ca-scheme-params { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.ca-scheme-param {
+    padding: 4px 8px;
+    background: #0b1220;
+    border: 1px solid #1e293b;
+    border-radius: 6px;
+    font-size: 11px;
+    color: #64748b;
+}
+.ca-scheme-param b { color: #cbd5e1; margin-left: 2px; }
+.ca-scheme-param i { font-style: normal; }
+.ca-scheme-cmp-title { font-size: 12px; color: #94a3b8; margin: 8px 0 6px; font-weight: 600; }
+.ca-scheme-cmp-table, .ca-scheme-bt-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.ca-scheme-cmp-table th, .ca-scheme-cmp-table td,
+.ca-scheme-bt-table th, .ca-scheme-bt-table td {
+    padding: 6px 8px;
+    border-bottom: 1px solid #1e293b;
+    text-align: left;
+    color: #cbd5e1;
+}
+.ca-scheme-cmp-table th, .ca-scheme-bt-table th { color: #64748b; font-weight: 600; }
+.ca-scheme-row-active td { background: rgba(59, 130, 246, 0.12); }
+.ca-scheme-bt-detail { display: flex; flex-wrap: wrap; gap: 6px; }
+.ca-scheme-bt-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    background: #0b1220;
+    border: 1px solid #1e293b;
+    border-radius: 4px;
+    font-size: 11px;
+}
+.ca-scheme-bt-item b { color: #e2e8f0; }
+.ca-scheme-bt-item i { font-style: normal; color: #64748b; }
+.ca-scheme-bt-item em { font-style: normal; font-weight: 600; }
+
+.ca-rating-bull::before,
+.ca-rating-bear::before,
+.ca-rating-mix::before,
+.ca-rating-wait::before {
+    content: "";
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    margin-right: 4px;
+    vertical-align: 1px;
+    background: currentColor;
+}
+
+/* ---- 评级明细悬停卡 ---- */
+.ca-tip {
+    position: fixed;
+    z-index: 3000;
+    width: 340px;
+    padding: 12px 14px;
+    background: #111c2e;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+    font-size: 12px;
+    color: #cbd5e1;
+    pointer-events: none;
+}
+
+.ca-tip-head {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #1e293b;
+}
+
+.ca-tip-head b { font-size: 14px; color: #e2e8f0; }
+.ca-tip-code { font-size: 11px; color: #64748b; }
+
+.ca-tip-badge {
+    padding: 1px 7px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 700;
+    border: 1px solid currentColor;
+}
+
+.ca-tip-score {
+    margin-left: auto;
+    font-size: 18px;
+    font-weight: 700;
+    color: #e2e8f0;
+}
+
+.ca-tip-score i { font-size: 10px; font-style: normal; color: #64748b; margin-left: 1px; }
+
+.ca-tip-tier {
+    font-size: 11px;
+    color: #94a3b8;
+    background: #1e293b;
+    border-radius: 4px;
+    padding: 1px 6px;
+}
+
+.ca-tip-desc {
+    margin: 8px 0;
+    color: #cbd5e1;
+    line-height: 1.6;
+}
+
+.ca-tip-bars { margin: 8px 0; }
+
+.ca-tip-dim {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 3px 0;
+    font-size: 11px;
+}
+
+.ca-tip-dim-l { flex: 0 0 60px; color: #64748b; }
+.ca-tip-bar {
+    flex: 1;
+    height: 5px;
+    background: #1e293b;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.ca-tip-bar i {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, #3b82f6, #60a5fa);
+    border-radius: 3px;
+}
+
+.ca-tip-dim-v { flex: 0 0 40px; text-align: right; color: #94a3b8; }
+
+.ca-tip-kvs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px 10px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid #1e293b;
+}
+
+.ca-tip-kv {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+}
+
+.ca-tip-kv span { color: #64748b; }
+.ca-tip-kv b { color: #cbd5e1; font-weight: 600; }
+
+.ca-tip-outs {
+    margin-top: 8px;
+    padding: 6px 8px;
+    border-radius: 5px;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: #f87171;
+    font-size: 11px;
+}
+
+/* ---- 窄屏适配 ---- */
+@media (max-width: 900px) {
+    .ca-summary { grid-template-columns: repeat(4, 1fr); }
+    .ca-chip { font-size: 11px; padding: 2px 7px; }
+    .ca-filter-label { display: none; }
+    .ca-tip { width: 300px; }
+}

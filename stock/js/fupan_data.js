@@ -5,10 +5,9 @@
  * 1. 拉取后端采集落盘的复盘JSON（GitHub Pages静态部署，同源fetch，无需代理）
  *    - data/fupan/summary.json       多日汇总（趋势图数据源）
  *    - data/fupan/days/YYYYMMDD.json 单日完整数据（四子tab数据源）
- * 2. 本地缓存缺失兜底：本地 fetch 404（多为本地调试未同步最新采集，如仅到 2026-09-10）
- *    时自动回退到线上 GitHub Pages 镜像（remoteBase，经代理解决跨域 CORS），
- *    使本地调试也能拿到每日更新的涨停池/复盘数据，避免集合竞价/复盘"没数据"。
- *    镜像基址可由 localStorage 'fupan_remote_base' 覆盖。
+ * 2. 本地缓存缺失兜底：依次直连 GitHub Pages 路径(带 stock/ 前缀)→本地路径→线上镜像绝对地址
+ *    （与页面同源可达，无需代理；实测主代理 vercel 在部分网络下 42s 超时不可达，故静态文件不走代理），
+ *    全部失败才回退代理兜底。镜像基址可由 localStorage 'fupan_remote_base' 覆盖。
  * 2. 缓存策略：
  *    - 历史交易日数据（< 今天）：localStorage永久缓存（历史数据不变）
  *    - 当日数据：当日缓存（复用StockAPI.getDailyCache，当日CI更新后次日自动失效）
@@ -24,11 +23,11 @@
  */
 const FupanData = (function () {
 
-    // 数据文件基础路径（本地开发与GitHub Pages部署同为 stock/ 下相对路径）
+    // 本地数据文件基础路径（本地服务器根=stock_analysis 时有效；GitHub Pages 下用带 stock/ 前缀路径，见候选列表）
     const DATA_BASE = 'data/fupan/';
     const SUMMARY_URL = DATA_BASE + 'summary.json';
 
-    // 线上 GitHub Pages 镜像基址（本地缓存缺失时的兜底数据源，经代理解决跨域 CORS）
+    // 线上 GitHub Pages 镜像基址（本地缓存缺失时的兜底数据源，同源直连可达）
     // 本地调试时 fupan 缓存往往滞后（如仅到 2026-09-10），而线上镜像每日更新；
     // 本地 404 时自动回退到此地址拉取，避免集合竞价/复盘因缺缓存而"没数据"。
     // 可由 localStorage 键 'fupan_remote_base' 覆盖（便于切换镜像或私有部署）。
@@ -103,12 +102,17 @@ const FupanData = (function () {
                 return cached;
             }
         }
-        let data;
-        try {
-            data = await fetchJson(SUMMARY_URL);
-        } catch (localErr) {
-            // 本地 summary 缺失 → 回退线上镜像（经代理解决 CORS）
-            console.warn('本地 summary 缺失，回退线上镜像:', localErr && localErr.message);
+        let data = null;
+        // 静态 JSON 同源可达：依次直连 GitHub Pages 路径→本地路径→线上镜像绝对地址
+        for (const url of ['stock/data/fupan/summary.json', SUMMARY_URL, remoteBase() + 'summary.json']) {
+            try {
+                data = await fetchJson(url);
+                break;
+            } catch (e) { /* 尝试下一个路径 */ }
+        }
+        if (!data) {
+            // 兜底：代理（特殊网络环境）
+            console.warn('summary 直连均失败，回退代理');
             data = await StockAPI.request(remoteBase() + 'summary.json');
         }
         if (!data || !Array.isArray(data.days)) throw new Error('summary数据格式异常');
@@ -150,13 +154,24 @@ const FupanData = (function () {
 
         const task = (async () => {
             try {
-                let data;
-                try {
-                    data = await fetchJson(DATA_BASE + 'days/' + toCompact(dateStr) + '.json');
-                } catch (localErr) {
-                    // 本地缓存缺失（多为本地调试未同步最新采集）→ 回退线上 GitHub Pages 镜像（经代理解决 CORS）
-                    console.warn('本地复盘缓存缺失，回退线上镜像:', dateStr, localErr && localErr.message);
-                    data = await StockAPI.request(remoteBase() + 'days/' + toCompact(dateStr) + '.json');
+                let data = null;
+                // 静态 JSON 同源可达：依次直连 GitHub Pages 路径→本地路径→线上镜像绝对地址；
+                // 全失败才回退代理兜底（避免代理不可达导致"没数据"）
+                const ymd = toCompact(dateStr);
+                const candidates = [
+                    'stock/data/fupan/days/' + ymd + '.json',
+                    DATA_BASE + 'days/' + ymd + '.json',
+                    remoteBase() + 'days/' + ymd + '.json'
+                ];
+                for (const url of candidates) {
+                    try {
+                        data = await fetchJson(url);
+                        break;
+                    } catch (e) { /* 尝试下一个路径 */ }
+                }
+                if (!data) {
+                    console.warn('复盘缓存直连均失败，回退代理:', dateStr);
+                    data = await StockAPI.request(remoteBase() + 'days/' + ymd + '.json');
                 }
                 if (!data || !data.date) throw new Error('复盘数据格式异常: ' + dateStr);
                 dayCache.set(dateStr, data);
