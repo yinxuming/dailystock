@@ -55,7 +55,8 @@ stock_analysis/call_auction/
 - `call_auction/ca_rating.js`：评分参数化 `computeRow(r, config)` + `DEFAULT_SCORE_CFG/cloneCfg/normalizeCfg`（默认=现行口径，行为不变）。
 - `js/ca_render.js`：COLS 新增「竞价评分」列（TODO39.1，评级列后，可排序、按档位着色）；新增 `renderSchemeArea`（TODO39.2 方案区）。
 - `js/ca.js` / `index.html`：TODO39.2 方案回溯接线（`loadSchemes/buildBacktestDetail/onSchemeClick/applySchemeToRows` + 结果表下方可折叠方案区）。
-- `fupan/call_auction.py`：新增 `--mode close` 收盘补采（`collect_close`），15:05 写 close 字段；`parse_quote` 增加最高/最低价。
+- `fupan/call_auction.py`：新增 `--mode close` 收盘补采（`collect_close`），15:05 写 close 字段；`parse_quote` 增加最高/最低价；
+  `resolve_close_target` 目标日解析（指定>今天有文件>最近有文件的交易日，周末手动补采自动回退，如周日补上周五）。
 - `js/ca_data.js`：`buildBacktestCycles` 读「历史竞价 + 次日收盘」构建回测周期（缺数据跳过）。
 
 线上问题修复（2026-10-18，public 仓库竞价页空白）：
