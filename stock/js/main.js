@@ -16,14 +16,14 @@
  * - tab切换状态持久化：进入首页时恢复最后一次选中的tab
  *
  * TODO16.3.1数据策略：市场异动显示全部结果（不再按onlyRisk过滤）按风险降序；
- * 超过涨停限制的仅title提示（取消删除线）；默认提前天数8天（T+0~T+7）
+ * 超过涨停限制的仅title提示（取消删除线）；默认提前天数10天（T+0~T+9，对齐异动查查）
  */
 const App = (function () {
 
     // 默认配置
     const DEFAULT_CONFIG = {
         topN: 50,               // 每个榜单获取数量
-        forwardDays: 8,         // 提前天数（TODO16.3.1默认8天：T+0~T+7）
+        forwardDays: 10,        // 提前天数（TODO44：默认10天 T+0~T+9，对齐异动查查逐日预测）
         autoRefresh: 0,         // 自动刷新间隔(秒)，0=关闭（默认不自动刷新）
         concurrency: 2          // API并发数
     };
@@ -55,9 +55,9 @@ const App = (function () {
             const saved = localStorage.getItem('unusual_config');
             if (saved) {
                 const parsed = JSON.parse(saved);
-                // 配置迁移：旧版默认/钳制的forwardDays(<=4)一次性升级为8（TODO16.3.1）
-                if (parsed.forwardDays && parsed.forwardDays <= 4) {
-                    parsed.forwardDays = 8;
+                // 配置迁移：旧版默认的forwardDays(<=8，历史默认8/5/4)一次性升级为10（TODO44对齐异动查查）
+                if (parsed.forwardDays && parsed.forwardDays <= 8) {
+                    parsed.forwardDays = 10;
                 }
                 // onlyRisk配置废弃（TODO16.3.1改为全量显示），忽略旧值
                 delete parsed.onlyRisk;

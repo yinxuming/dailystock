@@ -371,24 +371,19 @@ const UnusualCalculator = (function () {
             trigger0 = Math.max(0, triggerX * 100);
         }
 
-        // 计算T+1到T+(forwardDays-1)的触发值（T+0直接复用基准点方式）
+        // 计算T+1到T+(forwardDays-1)的触发值（TODO44.2：逐日滑动窗口重算，修复"未来日冻结"bug）
+        // 映射关系（经腾讯真实K线对照异动查查标定）：T+N 对应窗口滑动 (N-1) 天——
+        //   T+1 用当前窗口(滑0天)，T+2 滑1天…；未来日价格按现价不变投影，
+        //   得到"该日收盘需再涨多少"（即该日当日涨幅，未来日昨收=现价）。
+        // 旧实现 calcDayTriggerDirect 忽略 dayOffset 参数，导致未来各天恒定不变（慈文T+2..T+10全=1.73%）。
+        const currentIndexChange = indexChangeMap.get(currentDate) || 0;
         const triggers = [trigger0];
         for (let dayOffset = 1; dayOffset < forwardDays; dayOffset++) {
-            const triggerValue = calcDayTriggerDirect(
-                threshold, dayOffset, bestBase
-            );
-            triggers.push(triggerValue);
+            triggers.push(calcDayTriggerSlide(
+                klines, indexPriceMap, windowSize, threshold, dayOffset - 1, currentIndexChange
+            ));
         }
-
-        // 计算T+1滑动窗口后的触发值（仅当T+0不可触发时使用）
-        // 关键改进：传递当前日的指数涨跌幅用于模拟T+1日的指数价
-        const currentIndexChange = indexChangeMap.get(currentDate) || 0;
-        let slideTrigger1 = null;
-        if (forwardDays > 1) {
-            slideTrigger1 = calcDayTriggerSlide(
-                klines, indexPriceMap, windowSize, threshold, 1, currentIndexChange
-            );
-        }
+        const slideTrigger1 = triggers.length > 1 ? triggers[1] : null;
 
         return {
             triggered,
@@ -405,27 +400,11 @@ const UnusualCalculator = (function () {
     }
 
     /**
-     * 计算未来第N天的异动触发涨幅限制（直接复用T+0基准点）
-     *
-     * 当T+0可触发时（trigger0 <= 涨停幅度），T+1及以后的值直接复用T+0基准点计算
-     * 此时滑动窗口不会改变基准点（因为T+0基准点已包含在滑动后的窗口中）
-     *
-     * @param {number} threshold - 异动阈值
-     * @param {number} dayOffset - 未来第几天(1=T+1, 2=T+2...)
-     * @param {Object} baseResult - T+0的基准点计算结果
-     * @returns {number|null} 触发所需额外涨幅百分比
-     */
-    function calcDayTriggerDirect(threshold, dayOffset, baseResult) {
-        if (baseResult.deviation >= threshold) return 0;
-        const triggerX = (1 + threshold + baseResult.indexGain) / (1 + baseResult.stockGain) - 1;
-        return Math.max(0, triggerX * 100);
-    }
-
-    /**
      * 计算未来第N天的异动触发涨幅限制（滑动窗口重新计算基准点）
      *
-     * 当T+0不可触发时（trigger0 > 涨停幅度），需要考虑滑动窗口效应，重新计算基准点
-     * 当窗口滑动时，最早的数据点被移出窗口，可能导致基准点变化
+     * 当窗口滑动时，最早的数据点被移出窗口，可能导致基准点变化。
+     * TODO44.2：未来各日统一走本函数（逐日滑动 dayOffset-1 天重算），
+     * 取代旧实现 calcDayTriggerDirect（其忽略 dayOffset、令未来日恒定不变的冻结bug，已删除）。
      *
      * 示例（中巨芯6.16，100异动，10天窗口6.02-6.15）：
      * - T+0基准点6.12(24.85)，偏离值3.62%，触发值88.64%（>20%涨停，不可触发）
@@ -501,6 +480,70 @@ const UnusualCalculator = (function () {
     }
 
     /**
+     * TODO44.2：十日同向异动线（上涨方向，对齐异动查查「十日同向异动线」）
+     *
+     * 规则（据异动查查「计算口径」截图）：
+     * - 普通异动 = 连续3个交易日收盘涨跌幅偏离累计值 >= +20%（主板）；
+     * - 严重异常红线按最近10个交易日「同向(涨)」次数计：主板4次、创业板/科创板3次；
+     * - 距红线差1次时，给出「触发下一次同向异动」的价格线（相对当前价涨幅%）。
+     *
+     * 触发价推导（据真实K线对照异动查查标定）：
+     * - 最近3日窗口[T-2,T-1,T]若已触发(最低价起算偏离>=20%)：下一次从现价起算 +20%（百洋12.62）；
+     * - 若未触发：以最近3日最低价为基准，P = 最低价×(0.20 + 当日指数/基准日指数)（慈文12.25）。
+     *
+     * 经验近似（样本有限，未能完全反解 occurrence 精确定义）：
+     * - occurrence 用「近10日 3日偏离>=20% 的天数」计数，达到 红线-1 才显示；
+     * - 叠加「dominantRule=100异动」门控——异动查查中200异动主导股不显示同向线（如九阳股份），
+     *   已知样本慈文12.25/百洋12.62/九阳(无) 均正确。
+     *
+     * @param {Array} klines - 个股K线（旧→新，含 close/date）
+     * @param {Array} indexKlines - 基准指数K线（含 date/close）
+     * @param {string} code - 股票代码（判板块红线条数）
+     * @returns {number|null} 相对当前价的触发涨幅%；不适用返回 null
+     */
+    function calcTongxiangLine(klines, indexKlines, code) {
+        if (!klines || klines.length < 6) return null;
+        const idxMap = new Map();
+        (indexKlines || []).forEach(k => idxMap.set(k.date, k.close));
+        const n = klines.length;
+        const T = n - 1;
+        const isGem = String(code).startsWith('30') || String(code).startsWith('68');
+        const redLine = isGem ? 3 : 4;   // 主板4次 / 创业板·科创板3次
+
+        // 近10个交易日：3日累计偏离 >= +20% 的次数（同向上涨）
+        let cnt = 0;
+        for (let i = Math.max(3, n - 10); i < n; i++) {
+            const i3 = idxMap.get(klines[i].date);
+            const i0 = idxMap.get(klines[i - 3].date);
+            const stockG = klines[i].close / klines[i - 3].close - 1;
+            const idxG = (i3 && i0) ? (i3 / i0 - 1) : 0;
+            if (stockG - idxG >= 0.20) cnt++;
+        }
+        if (cnt < redLine - 1) return null;   // 未到「差1次触红线」，不显示同向线
+
+        const cur = klines[T].close;
+        const idxT = idxMap.get(klines[T].date) || 0;
+        // 最近3日 [T-2, T-1, T] 最低收盘价及其日期
+        let low = klines[T].close, lowDate = klines[T].date;
+        for (let i = Math.max(0, T - 2); i <= T; i++) {
+            if (klines[i].close < low) { low = klines[i].close; lowDate = klines[i].date; }
+        }
+        const idxLow = idxMap.get(lowDate) || idxT;
+        const devRecent = (cur / low - 1) - ((idxT && idxLow) ? (idxT / idxLow - 1) : 0);
+
+        let linePrice;
+        if (devRecent >= 0.20) {
+            // 最近3日已触发同向异动 → 下一次从现价起算 +20%（指数投影取当日，比例=1）
+            linePrice = cur * 1.20;
+        } else {
+            // 未触发 → 以最近3日最低价为基准（指数投影取当日）
+            const ratio = (idxT && idxLow) ? (idxT / idxLow) : 1;
+            linePrice = low * (0.20 + ratio);
+        }
+        return (linePrice / cur - 1) * 100;
+    }
+
+    /**
      * 计算单只股票的完整异动分析结果
      * 同时计算100异动和200异动
      *
@@ -548,8 +591,9 @@ const UnusualCalculator = (function () {
         //                 T+1滑动窗口到6.03-6.16，基准点变为6.05(15.99)，偏离值64.19%，触发值21.19%
         const dailyGainRate = (stock.changePercent || 0) / 100;
         for (const ruleResult of allRuleResults) {
-            const slideTrigger1 = ruleResult.slideTrigger1;
-
+            // T+0 当日总涨幅按昨收复合；T+1..T+N 已是"当日涨幅"(滑动窗口投影，基准=现价)，直接使用。
+            // TODO44.2：移除了旧代码"T+0可触发时把 T+1 覆盖为 T+0 值"的错误逻辑——
+            //   该假设与异动查查/同花顺不符（慈文T+0=4.71%可触发，但T+1应为1.73%而非4.71%）。
             for (let day = 0; day < ruleResult.triggers.length; day++) {
                 if (ruleResult.triggers[day] !== null && ruleResult.triggers[day] > 0) {
                     const additionalGainRate = ruleResult.triggers[day] / 100;
@@ -560,18 +604,6 @@ const UnusualCalculator = (function () {
                         totalDailyGain = ruleResult.triggers[day];
                     }
                     ruleResult.triggers[day] = totalDailyGain;
-                }
-            }
-
-            // 根据T+0是否可触发，决定T+1显示值
-            // T+0可触发：T+1 = T+0当日总涨幅（滑动窗口不会改变基准点，T+1与T+0一致）
-            // T+0不可触发：T+1 = slideTrigger1（滑动窗口后重新计算基准点，得到的T+1额外涨幅）
-            const trigger0 = ruleResult.triggers[0];
-            if (ruleResult.triggers.length > 1 && slideTrigger1 !== null && slideTrigger1 !== undefined) {
-                if (trigger0 !== null && trigger0 !== undefined && isTriggerAchievable(trigger0, limitUpRate, 0)) {
-                    ruleResult.triggers[1] = trigger0;
-                } else {
-                    ruleResult.triggers[1] = slideTrigger1;
                 }
             }
         }
@@ -629,6 +661,38 @@ const UnusualCalculator = (function () {
             dominantRule = allRuleResults[0];
         }
 
+        // TODO44.2(q3)：逐日多规则取最小。
+        // - T+0 用 dominantRule（最紧急）的展示值（保持同花顺口径不变）；
+        // - T+N(N>=1) 在 100/200 规则间取最小——某规则随窗口滑动触发值上升超过另一条时，
+        //   自动切换到更低者，复现异动查查"100异动先升、随后由200异动接住并收敛"的行为。
+        const dayMin = new Array(forwardDays).fill(null);
+        for (let day = 0; day < forwardDays; day++) {
+            if (day === 0) {
+                dayMin[0] = (dominantRule.displayTriggers || dominantRule.triggers)[0];
+                continue;
+            }
+            let min = null;
+            for (const rr of allRuleResults) {
+                const v = (rr.displayTriggers || rr.triggers)[day];
+                if (v === null || v === undefined) continue;
+                if (min === null || v < min) min = v;
+            }
+            dayMin[day] = min;
+        }
+
+        // TODO44.2：纳入「十日同向异动线」（仅100异动主导股，据异动查查口径）。
+        // 同向线 = 触发下一次同向普通异动的涨幅；+20%需按涨停幅度累加，故生效天数
+        // K = ceil(0.20/涨停幅度)（主板10%→T+1/T+2，创业板·科创板20%→T+1）。
+        if (dominantRule.ruleName === '100异动') {
+            const txPct = calcTongxiangLine(klines, indexKlines, stock.code);
+            if (txPct !== null && txPct !== undefined) {
+                const kDays = Math.max(1, Math.ceil(0.20 / limitUpRate));
+                for (let d = 1; d <= Math.min(kDays, forwardDays - 1); d++) {
+                    if (dayMin[d] === null || dayMin[d] === undefined || txPct < dayMin[d]) dayMin[d] = txPct;
+                }
+            }
+        }
+
         // 判断是否有可触发的风险（只看T+0和T+1，与同花顺一致）
         let hasAchievableRisk = false;
         const checkDays = Math.min(2, forwardDays);
@@ -663,7 +727,8 @@ const UnusualCalculator = (function () {
             rules: allRuleResults,
             hasAchievableRisk,
             urgency,
-            dominantRule: dominantRule.ruleName
+            dominantRule: dominantRule.ruleName,
+            dayMin   // TODO44.2：逐日多规则最小触发值（day0=dominantRule展示值，day>=1=100/200取最小）
         };
     }
 
@@ -766,6 +831,7 @@ const UnusualCalculator = (function () {
         analyzeStock,
         analyzeStocks,
         calcTriggerPrice,
+        calcTongxiangLine,
         getIndexSecid,
         // 测试用
         findLocalMinima,
@@ -773,3 +839,6 @@ const UnusualCalculator = (function () {
         calcDeviationAtBase
     };
 })();
+
+// Node 测试环境下导出（浏览器无 module，此分支不执行）
+if (typeof module !== 'undefined' && module.exports) module.exports = UnusualCalculator;

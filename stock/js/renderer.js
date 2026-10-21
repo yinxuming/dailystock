@@ -29,6 +29,12 @@ const Renderer = (function () {
         return value > 0 ? '+' + fixed + '%' : fixed + '%';
     }
 
+    /** 格式化价格显示（TODO44.1：「当前幅度」列改为展示最新收盘价） */
+    function formatPrice(value) {
+        if (value === null || value === undefined) return '--';
+        return value.toFixed(2);
+    }
+
     /** 格式化触发值显示 */
     function formatTrigger(value) {
         if (value === null) return '--';
@@ -480,10 +486,11 @@ const Renderer = (function () {
                 tdDate.textContent = formatDate(result.date);
                 tr.appendChild(tdDate);
 
-                // 当前幅度
+                // 当前最新收盘价（TODO44.1：原「当前幅度」改为展示现价，涨跌色仍沿用当日涨幅便于一眼分辨）
                 const tdChange = document.createElement('td');
                 tdChange.className = 'col-change ' + getChangeClass(result.changePercent);
-                tdChange.textContent = formatChange(result.changePercent);
+                tdChange.textContent = formatPrice(result.price);
+                tdChange.title = '当日涨幅 ' + formatChange(result.changePercent) + '（现价为最新收盘价）';
                 tr.appendChild(tdChange);
 
                 // 异动类型标签（TODO30.1：占位行显示"计算中"灰标签，数据就绪后由全量渲染覆盖）
@@ -514,21 +521,24 @@ const Renderer = (function () {
                 tr.appendChild(tdTriggered);
 
                 // T+0 到 T+(forwardDays-1) 触发值（TODO16.3.3：触发涨幅换行显示触发价格）
+                // TODO44.2(q3)：T+0 用 dominantRule 展示值（同花顺口径：T+0不可触发回退额外涨幅）；
+                //   T+N(N>=1) 用逐日多规则最小值 result.dayMin（100/200随窗口滑动取更低者，对齐异动查查）。
                 for (let day = 0; day < forwardDays; day++) {
                     const td = document.createElement('td');
                     td.className = 'col-trigger';
 
-                    // 使用displayTriggers显示（同花顺风格：T+0不可触发时回退到T+1）
-                    const dayTrigger = (dominantRule.displayTriggers || dominantRule.triggers)[day];
-                    // 用原始triggers判断可触发性
-                    const rawTrigger = dominantRule.triggers[day];
+                    const dayTrigger = day === 0
+                        ? (dominantRule.displayTriggers || dominantRule.triggers)[0]
+                        : (result.dayMin ? result.dayMin[day] : (dominantRule.displayTriggers || dominantRule.triggers)[day]);
+                    // 可触发性：T+0 用原始triggers[0]（复合当日总涨幅）判断；T+N 直接用当日涨幅
+                    const rawTrigger = day === 0 ? dominantRule.triggers[0] : dayTrigger;
                     const achievable = UnusualCalculator.isTriggerAchievable(rawTrigger, result.limitUpRate, day);
 
                     if (dayTrigger !== null && dayTrigger !== undefined) {
                         td.classList.add(getTriggerClass(dayTrigger, achievable, result.limitUpRate));
                         // 触发价格：第二行小字（口径见calculator.calcTriggerPrice）
                         const trigPrice = UnusualCalculator.calcTriggerPrice
-                            ? UnusualCalculator.calcTriggerPrice(result.price, result.prevClose, day, dayTrigger, dominantRule)
+                            ? UnusualCalculator.calcTriggerPrice(result.price, result.prevClose, day, dayTrigger, day === 0 ? dominantRule : null)
                             : null;
                         if (trigPrice !== null && trigPrice !== undefined) {
                             td.innerHTML = formatTrigger(dayTrigger)
