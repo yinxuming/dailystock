@@ -317,6 +317,7 @@
 .ca-col-time { width: 70px; color: #94a3b8; font-size: 11px; }
 .ca-col-code { width: 68px; color: #94a3b8; }
 .ca-col-name { width: 84px; font-weight: 600; color: #e2e8f0; }
+.ca-col-lbc { width: 44px; text-align: center; color: #fbbf24; }
 .ca-col-type { min-width: 78px; }
 .ca-col-desc { min-width: 300px; max-width: 420px; text-align: left !important; white-space: normal; color: #94a3b8; font-size: 11px; line-height: 1.5; }
 .ca-col-rating { min-width: 74px; }

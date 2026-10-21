@@ -345,7 +345,10 @@ const Renderer = (function () {
                     batchBar.querySelector('[data-batch-remove]').addEventListener('click', () => {
                         const codes = getSelectedCodes();
                         if (!codes.length) return;
-                        if (window.confirm(`确定移除 ${codes.length} 只关注异动股票？`)) return;
+                        // TODO41-42修复：原逻辑 `if (window.confirm(...)) return` 在用户"确认"时
+                        // （confirm 返回 true）反而 return，导致 onCustomRemoveBatch 永不执行、批量移除失效。
+                        // 确认弹窗交由 main.js removeCustomMonitorBatch 统一处理（列出股票名，体验更清晰），
+                        // 此处仅转发选中 code，避免重复 confirm。
                         options.onCustomRemoveBatch(codes);
                     });
                     batchBar.querySelector('[data-batch-clear]').addEventListener('click', () => {

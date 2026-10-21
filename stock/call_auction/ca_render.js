@@ -13,6 +13,7 @@ const CARender = (function () {
         { key: 'time', label: '时间', cls: 'ca-col-time', sort: true, align: 'left' },
         { key: 'code', label: '代码', cls: 'ca-col-code', sort: true, align: 'left' },
         { key: 'name', label: '名称', cls: 'ca-col-name', sort: true, align: 'left' },
+        { key: 'lbc', label: '连板', cls: 'ca-col-lbc', sort: true, fmt: 'board' },   // TODO43：连板数（数据来自每日复盘涨停池缓存 row.lbc）
 		{ key: 'gap', label: '竞价涨幅', sort: true, fmt: 'pct', color: 'sign' },
 		{ key: 'chgPct', label: '涨幅', sort: true, fmt: 'pct', color: 'sign' },
 		{ key: 'aucAmt', label: '竞价金额', sort: true, fmt: 'amt' },
@@ -77,6 +78,7 @@ const CARender = (function () {
             case 'amt': return fmtAmount(v);
             case 'lots': return fmtLots(v);
             case 'mv': return fmtMV(v);
+            case 'board': return v == null ? '--' : (v + '板');   // TODO43：连板数展示（1→1板，缺失→--）
             default: return v == null || v === '' ? '--' : String(v);
         }
     }
@@ -485,6 +487,9 @@ const CARender = (function () {
         _internals: { fmtAmount, fmtLots, fmtMV, fmtPct, cellText, signCls }
     };
 })();
+
+// Node 测试环境下导出（浏览器无 module，此分支不执行）
+if (typeof module !== 'undefined' && module.exports) module.exports = CARender;
 
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = CARender;
