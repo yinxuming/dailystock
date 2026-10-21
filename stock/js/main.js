@@ -140,8 +140,9 @@ const App = (function () {
         const idx = list.indexOf(stock);
         list.splice(idx, 1);
         saveCustomMonitors(list);
+        // TODO41补：仅从已渲染结果移除该行，不重拉K线/不重算整表
         StockAPI.clearResultCache();
-        rerunAfterCustomChange();
+        removeCustomMonitorsFromView([code]);
         return true;
     }
 
@@ -161,8 +162,9 @@ const App = (function () {
             + matches.map(s => `  · ${s.name}（${s.code}）`).join('\n'))) return 0;
         const newList = list.filter(s => !codes.includes(s.code));
         saveCustomMonitors(newList);
+        // TODO41补：仅从已渲染结果剔除被移除的自定义行，不重拉K线/不重算整表
         StockAPI.clearResultCache();
-        rerunAfterCustomChange();
+        removeCustomMonitorsFromView(codes);
         return before - newList.length;
     }
 
@@ -175,6 +177,21 @@ const App = (function () {
         } else {
             run(false);
         }
+    }
+
+    /**
+     * TODO41补：从已渲染结果中移除指定自定义监控行（轻量，不重拉K线、不重算整表）
+     * 直接过滤内存中的 lastResults 并重渲染当前视图，保留其余已完成的计算结果，
+     * 解决"移除后整个列表清空、又重新触发取数与计算"的问题。
+     * 注意：调用方需配套 clearResultCache()，避免后续 run(false) 命中旧缓存时
+     * 把已移除股票（仍带 isCustom 标记）"复活"回关注异动列表。
+     * @param {string[]} codes - 被移除的股票代码
+     */
+    function removeCustomMonitorsFromView(codes) {
+        if (!codes || !codes.length) return;
+        const set = new Set(codes);
+        lastResults = lastResults.filter(r => !(r.isCustom && set.has(r.code)));
+        renderActiveMarketView();
     }
 
     /**
