@@ -455,16 +455,11 @@ const Renderer = (function () {
                 tdRank.textContent = index + 1;
                 tr.appendChild(tdRank);
 
-                // 名称（带板块颜色；TODO44.4：去掉名称后「自定义」徽标——关注异动tab本即全为自定义股、
-                // 市场异动tab已剔除自定义股，徽标不提供额外信息，且挤压名称列）
-                const tdName = document.createElement('td');
-                tdName.className = 'col-name' + (boardClass ? ' ' + boardClass : '');
-                tdName.textContent = result.name;
-                tr.appendChild(tdName);
-
-                // 代码（带东方财富超链接）
-                const tdCode = document.createElement('td');
-                tdCode.className = 'col-code';
+                // 股票（TODO45.1：名称\n代码 合并为一列）
+                const tdStock = document.createElement('td');
+                tdStock.className = 'col-name ' + (boardClass ? boardClass : '');
+                tdStock.appendChild(document.createTextNode(result.name));
+                tdStock.appendChild(document.createElement('br'));
                 const codeLink = document.createElement('a');
                 codeLink.href = getEastmoneyUrl(result.code);
                 codeLink.target = '_blank';
@@ -472,52 +467,54 @@ const Renderer = (function () {
                 codeLink.title = '查看东方财富详情';
                 codeLink.className = 'code-link';
                 codeLink.textContent = result.code;
-                tdCode.appendChild(codeLink);
-                tr.appendChild(tdCode);
+                tdStock.appendChild(codeLink);
+                tr.appendChild(tdStock);
 
-                // 日期
+                // 日期（TODO45.1/45.2：日期\n对应日期收盘价 合并；原「现价」列并入此处）
                 const tdDate = document.createElement('td');
                 tdDate.className = 'col-date';
-                tdDate.textContent = formatDate(result.date);
+                tdDate.appendChild(document.createTextNode(formatDate(result.date)));
+                tdDate.appendChild(document.createElement('br'));
+                if (result.__pending) {
+                    tdDate.appendChild(document.createTextNode('计算中'));
+                } else {
+                    const priceSpan = document.createElement('span');
+                    priceSpan.className = getChangeClass(result.changePercent);
+                    priceSpan.textContent = formatPrice(result.price);
+                    tdDate.appendChild(priceSpan);
+                    tdDate.title = formatDate(result.date) + ' 收盘价，当日涨幅 ' + formatChange(result.changePercent);
+                }
                 tr.appendChild(tdDate);
 
-                // 当前最新收盘价（TODO44.1：原「当前幅度」改为展示现价，涨跌色仍沿用当日涨幅便于一眼分辨）
-                const tdChange = document.createElement('td');
-                tdChange.className = 'col-change ' + getChangeClass(result.changePercent);
-                tdChange.textContent = formatPrice(result.price);
-                tdChange.title = '当日涨幅 ' + formatChange(result.changePercent) + '（现价为最新收盘价）';
-                tr.appendChild(tdChange);
-
-                // 异动类型标签（TODO30.1：占位行显示"计算中"灰标签，数据就绪后由全量渲染覆盖）
-                const tdTag = document.createElement('td');
-                tdTag.className = 'col-tag';
-                const badge = document.createElement('span');
-                badge.className = 'tag-badge ' + (result.__pending ? 'tag-pending' : dominantRule.tagClass);
-                badge.textContent = result.__pending ? '计算中' : dominantRule.ruleName;
-                tdTag.appendChild(badge);
-                tr.appendChild(tdTag);
-
-                // 偏离值（同花顺格式：N日偏离值:XX.XX%）
-                const tdDeviation = document.createElement('td');
-                tdDeviation.className = 'col-deviation';
-                tdDeviation.textContent = formatDeviation(dominantRule.currentGain, dominantRule.trendDays);
-                tr.appendChild(tdDeviation);
-
-                // 是否触发（TODO30.1：占位行显示"计算中"）
-                const tdTriggered = document.createElement('td');
-                tdTriggered.className = 'col-triggered';
+                // 异动（TODO45.1：异动类型\n偏离值\是否触发 合并为一列）
+                const tdUnusual = document.createElement('td');
+                tdUnusual.className = 'col-unusual';
                 if (result.__pending) {
-                    tdTriggered.innerHTML = '<span class="tag-triggered-pending">计算中</span>';
-                } else if (dominantRule.triggered) {
-                    tdTriggered.innerHTML = '<span class="tag-triggered-yes">已触发</span>';
+                    const pb = document.createElement('span');
+                    pb.className = 'tag-badge tag-pending';
+                    pb.textContent = '计算中';
+                    tdUnusual.appendChild(pb);
                 } else {
-                    tdTriggered.innerHTML = '<span class="tag-triggered-no">未触发</span>';
+                    const badge = document.createElement('span');
+                    badge.className = 'tag-badge ' + dominantRule.tagClass;
+                    badge.textContent = dominantRule.ruleName;
+                    tdUnusual.appendChild(badge);
+                    tdUnusual.appendChild(document.createElement('br'));
+                    const dev = document.createElement('span');
+                    dev.className = 'u-dev';
+                    dev.textContent = formatDeviation(dominantRule.currentGain, dominantRule.trendDays);
+                    tdUnusual.appendChild(dev);
+                    tdUnusual.appendChild(document.createElement('br'));
+                    const trig = document.createElement('span');
+                    trig.className = dominantRule.triggered ? 'tag-triggered-yes' : 'tag-triggered-no';
+                    trig.textContent = dominantRule.triggered ? '已触发' : '未触发';
+                    tdUnusual.appendChild(trig);
                 }
-                tr.appendChild(tdTriggered);
+                tr.appendChild(tdUnusual);
 
                 // T+0 到 T+(forwardDays-1) 触发值
                 // TODO44.2：T+0 用 dominantRule 展示值（同花顺口径）；T+N 用逐日多规则最小值 dayMin。
-                // TODO44.4：按异动查查格式每格多行展示——涨幅 / 触发价 / 10日触发价 / 30日触发价 / 10日同向异动线(如有)。
+                // TODO45.3：各规则行文字简化（10日触发价→10：xx、30日触发价→30：xx、10日同向异动线→10同：xx），hover 显示完整。
                 for (let day = 0; day < forwardDays; day++) {
                     const td = document.createElement('td');
                     td.className = 'col-trigger';
@@ -537,26 +534,34 @@ const Renderer = (function () {
                         const mainPrice = (day === 0 && UnusualCalculator.calcTriggerPrice)
                             ? UnusualCalculator.calcTriggerPrice(result.price, result.prevClose, day, dayTrigger, dominantRule)
                             : (result.price != null ? result.price * (1 + dayTrigger / 100) : null);
+                        const hover = [];
+                        if (mainPrice !== null && mainPrice !== undefined) hover.push('触发价 ' + mainPrice.toFixed(2));
+                        if (line) {
+                            if (line.r100 !== null && line.r100 !== undefined) hover.push('10日触发价 ' + line.r100.toFixed(2));
+                            if (line.r200 !== null && line.r200 !== undefined) hover.push('30日触发价 ' + line.r200.toFixed(2));
+                            if (line.tx !== null && line.tx !== undefined) hover.push('10日同向异动线 ' + line.tx.toFixed(2));
+                        }
                         let html = formatTrigger(dayTrigger);
                         if (mainPrice !== null && mainPrice !== undefined) {
-                            html += '<br><span class="trigger-price">触发价 ' + mainPrice.toFixed(2) + '</span>';
+                            html += '<br><span class="trigger-price">' + mainPrice.toFixed(2) + '</span>';
                         }
-                        // 各规则触发价（异动查查多行格式）
+                        // 各规则触发价（简化标签，hover 完整）
                         if (line) {
                             if (line.r100 !== null && line.r100 !== undefined) {
-                                html += '<br><span class="trigger-rule">10日触发价 ' + line.r100.toFixed(2) + '</span>';
+                                html += '<br><span class="trigger-rule" title="10日触发价 ' + line.r100.toFixed(2) + '">10：' + line.r100.toFixed(2) + '</span>';
                             }
                             if (line.r200 !== null && line.r200 !== undefined) {
-                                html += '<br><span class="trigger-rule">30日触发价 ' + line.r200.toFixed(2) + '</span>';
+                                html += '<br><span class="trigger-rule" title="30日触发价 ' + line.r200.toFixed(2) + '">30：' + line.r200.toFixed(2) + '</span>';
                             }
                             if (line.tx !== null && line.tx !== undefined) {
-                                html += '<br><span class="trigger-rule trigger-tx">10日同向异动线 ' + line.tx.toFixed(2) + '</span>';
+                                html += '<br><span class="trigger-rule trigger-tx" title="10日同向异动线 ' + line.tx.toFixed(2) + '">10同：' + line.tx.toFixed(2) + '</span>';
                             }
                         }
                         td.innerHTML = html;
+                        if (hover.length) td.title = hover.join('\n');
                         // 不可触发的加title提示（TODO16.3.1：取消删除线样式，仅提示）
                         if (!achievable && dayTrigger > 0) {
-                            td.title = '超过' + (day + 1) + '天涨停限制，不可能触发';
+                            td.title = (td.title ? td.title + '\n' : '') + '超过' + (day + 1) + '天涨停限制，不可能触发';
                         }
                     } else {
                         td.textContent = '--';

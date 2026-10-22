@@ -25,7 +25,8 @@ const App = (function () {
         topN: 50,               // 每个榜单获取数量
         forwardDays: 10,        // 提前天数（TODO44：默认10天 T+0~T+9，对齐异动查查逐日预测）
         autoRefresh: 0,         // 自动刷新间隔(秒)，0=关闭（默认不自动刷新）
-        concurrency: 2          // API并发数
+        concurrency: 2,         // API并发数
+        realtimeCalc: false     // TODO45.2：当日实时价计算开关（默认关=用已收盘/所选日收盘价；开=盘中取实时价计算）
     };
 
     // 左侧菜单tab持久化key
@@ -220,6 +221,7 @@ const App = (function () {
         document.getElementById('settingTopN').value = config.topN;
         document.getElementById('settingForwardDays').value = config.forwardDays;
         document.getElementById('settingAutoRefresh').value = config.autoRefresh;
+        document.getElementById('settingRealtimeCalc').checked = !!config.realtimeCalc;
         document.getElementById('settingRequestInterval').value = StockAPI.getRequestInterval();
 
         // 代理配置
@@ -243,6 +245,7 @@ const App = (function () {
         config.topN = parseInt(document.getElementById('settingTopN').value) || DEFAULT_CONFIG.topN;
         config.forwardDays = parseInt(document.getElementById('settingForwardDays').value) || DEFAULT_CONFIG.forwardDays;
         config.autoRefresh = parseInt(document.getElementById('settingAutoRefresh').value) || 0;
+        config.realtimeCalc = document.getElementById('settingRealtimeCalc').checked;
 
         // 请求间隔
         const intervalVal = parseInt(document.getElementById('settingRequestInterval').value) || 500;
@@ -336,6 +339,22 @@ const App = (function () {
 
             console.log(`目标交易日: ${targetDate}, K线最新日: ${latestTradeDate}, 偏移: ${tradeDayOffset}`);
 
+            // TODO45.2/45.4：数据截止日(as-of)——计算与展示均基于该日收盘价，不用最新价
+            // - 选了历史日期 → 该日期（历史快照，只用其及之前收盘价，不用之后的最新价）
+            // - 未选 + 勾选"当日实时价计算" + 今日是交易日 → 今日（含盘中实时价）
+            // - 未选 + 默认 → 最近已收盘交易日（今日未收盘则退到上一交易日）
+            let asOfDate;
+            if (selectedDate) {
+                asOfDate = targetDate;
+            } else if (config.realtimeCalc && TradingCalendar.isTradingDay(new Date())) {
+                asOfDate = latestTradeDate;
+            } else {
+                asOfDate = TradingCalendar.isMarketClosed()
+                    ? latestTradeDate
+                    : (TradingCalendar.getPreviousTradeDate(new Date(), 1) || latestTradeDate);
+            }
+            console.log(`数据截止日(as-of): ${asOfDate}`);
+
             // 强制刷新时清空所有缓存
             if (forceRefresh) {
                 StockAPI.clearAllCache();
@@ -350,9 +369,9 @@ const App = (function () {
                     // 1) K线最新日与目标交易日的 offset 一致（否则切了日期仍返回旧数据）
                     // 2) K线最新日 == latestTradeDate（否则缓存是更早拉的）
                     // 3) 已收盘后获取 or latestTradeDate < today（历史交易日无盘中问题）
-                    const klineDateOk = meta.klineLatestDate === latestTradeDate;
+                    const klineDateOk = meta.klineLatestDate === asOfDate;
                     const offsetOk = meta.tradeDayOffset === tradeDayOffset;
-                    const afterClose = meta.capturedAfterClose || latestTradeDate !== TradingCalendar.formatDate(new Date());
+                    const afterClose = meta.capturedAfterClose || asOfDate !== TradingCalendar.formatDate(new Date());
                     if (klineDateOk && offsetOk && afterClose) {
                         console.log('使用缓存结果，共' + cacheWrap.data.length + '只（meta=' + JSON.stringify(meta) + '）');
                         lastResults = cacheWrap.data;
@@ -416,6 +435,23 @@ const App = (function () {
             const indexKlineMap = await StockAPI.getBenchmarkIndices(allStocks, 40);
             console.log('基准指数获取完成:', Array.from(indexKlineMap.keys()).join(', '));
 
+            // TODO45.2/45.4：把个股K线与基准指数K线都截断到 asOfDate（含），
+            // 保证偏离值/触发值基于该日收盘价计算，而非盘中实时价或所选日之后的最新价。
+            const truncateTo = (bars, dateStr) => {
+                if (!bars || !dateStr) return bars;
+                const out = bars.filter(b => b.date <= dateStr);
+                return out.length ? out : bars;
+            };
+            if (asOfDate) {
+                allStocks.forEach(s => {
+                    const k = klineMap.get(s.secid);
+                    if (k) klineMap.set(s.secid, truncateTo(k, asOfDate));
+                });
+                indexKlineMap.forEach((bars, secid) => {
+                    indexKlineMap.set(secid, truncateTo(bars, asOfDate));
+                });
+            }
+
             // 第3步：计算异动分析（传入指数K线数据和交易日偏移量）
             // TODO16.3.1：全量分析不做风险过滤（市场异动tab显示全部按风险降序，
             // 关注异动tab单独过滤自定义监控股），双视图在渲染阶段分流
@@ -435,7 +471,7 @@ const App = (function () {
 
             // 第4步：缓存识别结果（TODO20：附带K线日期/offset/收盘后判定，保证切日期/盘前盘中不命中旧缓存）
             if (results.length > 0) {
-                const klineDate = results[0].date || latestTradeDate;
+                const klineDate = asOfDate || results[0].date || latestTradeDate;
                 const capturedAfterClose = TradingCalendar.isMarketClosed();
                 StockAPI.setResultCache(results, {
                     klineLatestDate: klineDate,
@@ -1120,34 +1156,33 @@ const App = (function () {
 
         const direction = isAsc ? -1 : 1;
 
+        // 列索引取该 th 在表头行的实际位置（TODO45.1：表头与行结构一致，
+        // 自动兼容"关注异动"tab 行首动态插入的 col-check 列，避免硬编码索引偏移）
+        const headerTr = table.querySelector('thead tr');
+        const colIdx = headerTr ? Array.prototype.indexOf.call(headerTr.children, th) : -1;
+        const trigMatch = field.match(/^trigger(\d+)$/);
+
         rows.sort((a, b) => {
             const cellsA = a.querySelectorAll('td');
             const cellsB = b.querySelectorAll('td');
+            const cellA = colIdx >= 0 ? cellsA[colIdx] : null;
+            const cellB = colIdx >= 0 ? cellsB[colIdx] : null;
 
-            let valA, valB;
-            // T+N触发列：列索引 = 天数N + 8（排名0,名称1,代码2,日期3,当前幅度4,异动类型5,偏离值6,是否触发7,触发8开始）
-            // 通用triggerN匹配（TODO16.3.1：列数随forwardDays动态增减）
-            const trigMatch = field.match(/^trigger(\d+)$/);
-
-            switch (true) {
-                case field === 'name':
-                    valA = cellsA[1].textContent;
-                    valB = cellsB[1].textContent;
-                    return direction * valA.localeCompare(valB, 'zh');
-                case field === 'change':
-                    valA = parseFloat(cellsA[4].textContent) || 0;
-                    valB = parseFloat(cellsB[4].textContent) || 0;
-                    break;
-                case !!trigMatch:
-                    // 触发格含换行触发价格（"10.07%\n12.34"），parseFloat取首个数值即涨幅
-                    valA = parseFloat(cellsA[parseInt(trigMatch[1]) + 8].textContent) || 999;
-                    valB = parseFloat(cellsB[parseInt(trigMatch[1]) + 8].textContent) || 999;
-                    break;
-                default:
-                    return 0;
+            // 股票列：按文本（名称\n代码）中文排序
+            if (field === 'name') {
+                const va = cellA ? cellA.textContent : '';
+                const vb = cellB ? cellB.textContent : '';
+                return direction * va.localeCompare(vb, 'zh');
             }
-
-            return direction * (valA - valB);
+            // 触发列(triggerN)：取该格首个数值（涨幅%），无效值沉底(999)
+            if (trigMatch) {
+                let va = cellA ? parseFloat(cellA.textContent) : NaN;
+                let vb = cellB ? parseFloat(cellB.textContent) : NaN;
+                if (isNaN(va)) va = 999;
+                if (isNaN(vb)) vb = 999;
+                return direction * (va - vb);
+            }
+            return 0;
         });
 
         // 重新插入排序后的行

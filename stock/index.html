@@ -7,7 +7,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>股票严重异动监控系统</title>
-    <link rel="stylesheet" href="css/style.css?v=25">
+    <link rel="stylesheet" href="css/style.css?v=26">
     <link rel="stylesheet" href="call_auction/ca.css?v=2">
 </head>
 <body>
@@ -85,13 +85,9 @@
                             <thead>
                                 <tr>
                                     <th class="col-rank">#</th>
-                                    <th class="col-name" data-sort="name">名称</th>
-                                    <th class="col-code">代码</th>
+                                    <th class="col-name" data-sort="name">股票</th>
                                     <th class="col-date">日期</th>
-                                    <th class="col-change" data-sort="change">现价</th>
-                                    <th class="col-tag">异动类型</th>
-                                    <th class="col-deviation">偏离值</th>
-                                    <th class="col-triggered">是否触发</th>
+                                    <th class="col-unusual">异动</th>
                                     <th class="col-trigger" data-sort="trigger0">T+0</th>
                                     <th class="col-trigger" data-sort="trigger1">T+1</th>
                                     <th class="col-trigger" data-sort="trigger2">T+2</th>
@@ -313,6 +309,11 @@
                             <label for="settingAutoRefresh">自动刷新（秒，0=关闭）</label>
                             <input type="number" id="settingAutoRefresh" min="0" max="600" value="0">
                         </div>
+                        <div class="settings-group settings-group-check">
+                            <label for="settingRealtimeCalc">当日实时价计算</label>
+                            <input type="checkbox" id="settingRealtimeCalc">
+                            <span class="settings-hint">默认关：用已收盘/所选日收盘价计算；开：当日盘中取实时价计算异动变化</span>
+                        </div>
                         <div class="settings-group">
                             <label for="settingRequestInterval">请求间隔（毫秒，建议300-1000）</label>
                             <input type="number" id="settingRequestInterval" min="0" max="5000" value="500">
@@ -369,7 +370,7 @@
     <script src="js/stock_search.js?v=1"></script>
     <script src="js/tradingCalendar.js?v=11"></script>
     <script src="js/table_cols.js?v=2"></script>
-    <script src="js/renderer.js?v=26"></script>
+    <script src="js/renderer.js?v=27"></script>
     <script src="js/wl_group.js?v=3"></script>
     <script src="js/watchlist.js?v=7"></script>
     <script src="js/fupan_data.js?v=1"></script>
@@ -382,6 +383,6 @@
     <script src="call_auction/ca_scheme.js?v=1"></script>
     <script src="call_auction/ca_render.js?v=2"></script>
     <script src="call_auction/ca.js?v=2"></script>
-    <script src="js/main.js?v=27"></script>
+    <script src="js/main.js?v=28"></script>
 </body>
 </html>
