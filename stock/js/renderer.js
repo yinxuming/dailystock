@@ -543,7 +543,8 @@ const Renderer = (function () {
                             if (line.r200 !== null && line.r200 !== undefined) hover.push('30日触发价 ' + line.r200.toFixed(2));
                             if (line.tx !== null && line.tx !== undefined) hover.push('10日同向异动线 ' + line.tx.toFixed(2));
                         }
-                        let html = formatTrigger(dayTrigger);
+                        // TODO45.7：涨幅包一层 .trigger-gain，便于单独调大字号（触发价/规则行仍是小字）
+                        let html = '<span class="trigger-gain">' + formatTrigger(dayTrigger) + '</span>';
                         if (mainPrice !== null && mainPrice !== undefined) {
                             html += '<br><span class="trigger-price">' + mainPrice.toFixed(2) + '</span>';
                         }

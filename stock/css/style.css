@@ -518,6 +518,19 @@ body.embedded .app-layout {
     color: inherit;
 }
 
+/* TODO45.7：异动监控表多行单元格顶格对齐（日期/异动/T+N列多行数据不再上下居中） */
+#stockTable td {
+    vertical-align: top;
+}
+
+/* TODO45.7：触发涨幅字号调大2号（13→15px）并加粗，与触发价/规则行小字形成层级 */
+.trigger-gain {
+    display: block;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.2;
+}
+
 /* ===== T+N触发价格小字（TODO16.3.3：触发涨幅换行显示触发价格） ===== */
 .trigger-price {
     display: block;
@@ -2138,6 +2151,11 @@ body.embedded .app-layout {
     .stock-table th,
     .stock-table td {
         padding: 8px 4px;
+    }
+
+    /* TODO45.7：移动端涨幅仍比基准(12px)大2号 */
+    .trigger-gain {
+        font-size: 14px;
     }
 
     .settings-page {
