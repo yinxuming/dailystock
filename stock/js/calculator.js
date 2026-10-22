@@ -683,11 +683,14 @@ const UnusualCalculator = (function () {
         // TODO44.2：纳入「十日同向异动线」（仅100异动主导股，据异动查查口径）。
         // 同向线 = 触发下一次同向普通异动的涨幅；+20%需按涨停幅度累加，故生效天数
         // K = ceil(0.20/涨停幅度)（主板10%→T+1/T+2，创业板·科创板20%→T+1）。
+        let txPct = null;   // 同向线涨幅%（供 dayLines 展示各规则触发价用）
+        let txK = 0;        // 同向线生效至第几天
         if (dominantRule.ruleName === '100异动') {
-            const txPct = calcTongxiangLine(klines, indexKlines, stock.code);
-            if (txPct !== null && txPct !== undefined) {
-                const kDays = Math.max(1, Math.ceil(0.20 / limitUpRate));
-                for (let d = 1; d <= Math.min(kDays, forwardDays - 1); d++) {
+            const tx = calcTongxiangLine(klines, indexKlines, stock.code);
+            if (tx !== null && tx !== undefined) {
+                txPct = tx;
+                txK = Math.max(1, Math.ceil(0.20 / limitUpRate));
+                for (let d = 1; d <= Math.min(txK, forwardDays - 1); d++) {
                     if (dayMin[d] === null || dayMin[d] === undefined || txPct < dayMin[d]) dayMin[d] = txPct;
                 }
             }
@@ -714,6 +717,29 @@ const UnusualCalculator = (function () {
         const price = klines.length > 0 ? klines[klines.length - 1].close : null;
         const prevClose = klines.length > 1 ? klines[klines.length - 2].close : null;
 
+        // TODO44.4：逐日各规则触发价（dayLines），供渲染层按异动查查格式展示多行：
+        //   涨幅% / 触发价 / 10日触发价 / 30日触发价 / 10日同向异动线(如有)
+        // T+N(N>=1) 各规则触发价 = 现价×(1+该规则触发涨幅/100)（未来日昨收=现价）。
+        const rule100 = allRuleResults.find(r => r.ruleName === '100异动');
+        const rule200 = allRuleResults.find(r => r.ruleName === '200异动');
+        const dayLines = new Array(forwardDays).fill(null);
+        for (let d = 0; d < forwardDays; d++) {
+            if (d === 0) {
+                // T+0 保持同花顺单值口径（当日总涨幅/额外涨幅），不展开各规则行
+                dayLines[0] = { minPct: dayMin[0], r100: null, r200: null, tx: null };
+                continue;
+            }
+            const t100 = rule100 ? rule100.triggers[d] : null;
+            const t200 = rule200 ? rule200.triggers[d] : null;
+            const tx = (txPct !== null && d >= 1 && d <= txK && price !== null) ? price * (1 + txPct / 100) : null;
+            dayLines[d] = {
+                minPct: dayMin[d],
+                r100: (t100 !== null && t100 !== undefined && price !== null) ? price * (1 + t100 / 100) : null,
+                r200: (t200 !== null && t200 !== undefined && price !== null) ? price * (1 + t200 / 100) : null,
+                tx: tx
+            };
+        }
+
         return {
             code: stock.code,
             name: stock.name,
@@ -728,7 +754,8 @@ const UnusualCalculator = (function () {
             hasAchievableRisk,
             urgency,
             dominantRule: dominantRule.ruleName,
-            dayMin   // TODO44.2：逐日多规则最小触发值（day0=dominantRule展示值，day>=1=100/200取最小）
+            dayMin,   // TODO44.2：逐日多规则最小触发值（day0=dominantRule展示值，day>=1=100/200取最小）
+            dayLines  // TODO44.4：逐日各规则触发价（异动查查多行格式：10日/30日/同向线）
         };
     }
 

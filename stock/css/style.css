@@ -531,6 +531,20 @@ body.embedded .app-layout {
     margin-top: 1px;
 }
 
+/* TODO44.4：异动查查多行格式——各规则触发价（10日/30日/同向线）小字 */
+.trigger-rule {
+    display: block;
+    font-size: 10px;
+    font-weight: 400;
+    opacity: 0.55;
+    margin-top: 1px;
+    line-height: 1.25;
+}
+.trigger-rule.trigger-tx {
+    opacity: 0.8;
+    color: #fbbf24;   /* 十日同向异动线 琥珀色高亮 */
+}
+
 /* ===== 是否触发标签 ===== */
 .tag-triggered-yes {
     display: inline-block;

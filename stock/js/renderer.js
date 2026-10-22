@@ -455,16 +455,11 @@ const Renderer = (function () {
                 tdRank.textContent = index + 1;
                 tr.appendChild(tdRank);
 
-                // 名称（带板块颜色，自定义监控行追加标记）
+                // 名称（带板块颜色；TODO44.4：去掉名称后「自定义」徽标——关注异动tab本即全为自定义股、
+                // 市场异动tab已剔除自定义股，徽标不提供额外信息，且挤压名称列）
                 const tdName = document.createElement('td');
                 tdName.className = 'col-name' + (boardClass ? ' ' + boardClass : '');
                 tdName.textContent = result.name;
-                if (result.isCustom) {
-                    const customTag = document.createElement('span');
-                    customTag.className = 'tag-badge tag-badge-custom';
-                    customTag.textContent = '自定义';
-                    tdName.appendChild(customTag);
-                }
                 tr.appendChild(tdName);
 
                 // 代码（带东方财富超链接）
@@ -520,32 +515,45 @@ const Renderer = (function () {
                 }
                 tr.appendChild(tdTriggered);
 
-                // T+0 到 T+(forwardDays-1) 触发值（TODO16.3.3：触发涨幅换行显示触发价格）
-                // TODO44.2(q3)：T+0 用 dominantRule 展示值（同花顺口径：T+0不可触发回退额外涨幅）；
-                //   T+N(N>=1) 用逐日多规则最小值 result.dayMin（100/200随窗口滑动取更低者，对齐异动查查）。
+                // T+0 到 T+(forwardDays-1) 触发值
+                // TODO44.2：T+0 用 dominantRule 展示值（同花顺口径）；T+N 用逐日多规则最小值 dayMin。
+                // TODO44.4：按异动查查格式每格多行展示——涨幅 / 触发价 / 10日触发价 / 30日触发价 / 10日同向异动线(如有)。
                 for (let day = 0; day < forwardDays; day++) {
                     const td = document.createElement('td');
                     td.className = 'col-trigger';
 
-                    const dayTrigger = day === 0
-                        ? (dominantRule.displayTriggers || dominantRule.triggers)[0]
-                        : (result.dayMin ? result.dayMin[day] : (dominantRule.displayTriggers || dominantRule.triggers)[day]);
+                    const line = result.dayLines ? result.dayLines[day] : null;
+                    const dayTrigger = line ? line.minPct
+                        : (day === 0
+                            ? (dominantRule.displayTriggers || dominantRule.triggers)[0]
+                            : (result.dayMin ? result.dayMin[day] : (dominantRule.displayTriggers || dominantRule.triggers)[day]));
                     // 可触发性：T+0 用原始triggers[0]（复合当日总涨幅）判断；T+N 直接用当日涨幅
                     const rawTrigger = day === 0 ? dominantRule.triggers[0] : dayTrigger;
                     const achievable = UnusualCalculator.isTriggerAchievable(rawTrigger, result.limitUpRate, day);
 
                     if (dayTrigger !== null && dayTrigger !== undefined) {
                         td.classList.add(getTriggerClass(dayTrigger, achievable, result.limitUpRate));
-                        // 触发价格：第二行小字（口径见calculator.calcTriggerPrice）
-                        const trigPrice = UnusualCalculator.calcTriggerPrice
-                            ? UnusualCalculator.calcTriggerPrice(result.price, result.prevClose, day, dayTrigger, day === 0 ? dominantRule : null)
-                            : null;
-                        if (trigPrice !== null && trigPrice !== undefined) {
-                            td.innerHTML = formatTrigger(dayTrigger)
-                                + '<br><span class="trigger-price">' + trigPrice.toFixed(2) + '</span>';
-                        } else {
-                            td.textContent = formatTrigger(dayTrigger);
+                        // 主触发价：T+0 基于昨收（calcTriggerPrice）；T+N 基于现价
+                        const mainPrice = (day === 0 && UnusualCalculator.calcTriggerPrice)
+                            ? UnusualCalculator.calcTriggerPrice(result.price, result.prevClose, day, dayTrigger, dominantRule)
+                            : (result.price != null ? result.price * (1 + dayTrigger / 100) : null);
+                        let html = formatTrigger(dayTrigger);
+                        if (mainPrice !== null && mainPrice !== undefined) {
+                            html += '<br><span class="trigger-price">触发价 ' + mainPrice.toFixed(2) + '</span>';
                         }
+                        // 各规则触发价（异动查查多行格式）
+                        if (line) {
+                            if (line.r100 !== null && line.r100 !== undefined) {
+                                html += '<br><span class="trigger-rule">10日触发价 ' + line.r100.toFixed(2) + '</span>';
+                            }
+                            if (line.r200 !== null && line.r200 !== undefined) {
+                                html += '<br><span class="trigger-rule">30日触发价 ' + line.r200.toFixed(2) + '</span>';
+                            }
+                            if (line.tx !== null && line.tx !== undefined) {
+                                html += '<br><span class="trigger-rule trigger-tx">10日同向异动线 ' + line.tx.toFixed(2) + '</span>';
+                            }
+                        }
+                        td.innerHTML = html;
                         // 不可触发的加title提示（TODO16.3.1：取消删除线样式，仅提示）
                         if (!achievable && dayTrigger > 0) {
                             td.title = '超过' + (day + 1) + '天涨停限制，不可能触发';
