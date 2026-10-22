@@ -335,9 +335,6 @@ const App = (function () {
                 targetDate = TradingCalendar.getTargetTradeDate();
             }
             const latestTradeDate = TradingCalendar.getLatestTradeDate();
-            const tradeDayOffset = TradingCalendar.getTradeDayOffset(latestTradeDate, targetDate);
-
-            console.log(`目标交易日: ${targetDate}, K线最新日: ${latestTradeDate}, 偏移: ${tradeDayOffset}`);
 
             // TODO45.2/45.4：数据截止日(as-of)——计算与展示均基于该日收盘价，不用最新价
             // - 选了历史日期 → 该日期（历史快照，只用其及之前收盘价，不用之后的最新价）
@@ -353,7 +350,11 @@ const App = (function () {
                     ? latestTradeDate
                     : (TradingCalendar.getPreviousTradeDate(new Date(), 1) || latestTradeDate);
             }
-            console.log(`数据截止日(as-of): ${asOfDate}`);
+            // TODO45.5：偏移量基于"数据截止日→目标交易日"（K线已按 as-of 截断，故最新日=as-of），
+            //   供计算器把展示第d列平移到目标交易日+d。
+            const tradeDayOffset = TradingCalendar.getTradeDayOffset(asOfDate, targetDate);
+
+            console.log(`目标交易日: ${targetDate}, K线最新日: ${latestTradeDate}, as-of: ${asOfDate}, 偏移: ${tradeDayOffset}`);
 
             // 强制刷新时清空所有缓存
             if (forceRefresh) {

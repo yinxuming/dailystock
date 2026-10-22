@@ -513,8 +513,9 @@ const Renderer = (function () {
                 tr.appendChild(tdUnusual);
 
                 // T+0 到 T+(forwardDays-1) 触发值
-                // TODO44.2：T+0 用 dominantRule 展示值（同花顺口径）；T+N 用逐日多规则最小值 dayMin。
-                // TODO45.3：各规则行文字简化（10日触发价→10：xx、30日触发价→30：xx、10日同向异动线→10同：xx），hover 显示完整。
+                // TODO44.2：逐日多规则最小值 dayMin。TODO45.3：各规则行简化标签，hover 完整。
+                // TODO45.5：dayLines[d] 已按 tradeDayOffset 平移（展示第d列=目标交易日+d），
+                //   并预计算 mainPrice/achievable，渲染层直接取用、无需再判 offset/T+0。
                 for (let day = 0; day < forwardDays; day++) {
                     const td = document.createElement('td');
                     td.className = 'col-trigger';
@@ -524,15 +525,16 @@ const Renderer = (function () {
                         : (day === 0
                             ? (dominantRule.displayTriggers || dominantRule.triggers)[0]
                             : (result.dayMin ? result.dayMin[day] : (dominantRule.displayTriggers || dominantRule.triggers)[day]));
-                    // 可触发性：T+0 用原始triggers[0]（复合当日总涨幅）判断；T+N 直接用当日涨幅
-                    const rawTrigger = day === 0 ? dominantRule.triggers[0] : dayTrigger;
-                    const achievable = UnusualCalculator.isTriggerAchievable(rawTrigger, result.limitUpRate, day);
+                    // 可触发性：优先用 dayLines 预计算值；回退按当日涨幅判断
+                    const achievable = (line && line.achievable !== undefined)
+                        ? line.achievable
+                        : UnusualCalculator.isTriggerAchievable(dayTrigger, result.limitUpRate, day);
 
                     if (dayTrigger !== null && dayTrigger !== undefined) {
                         td.classList.add(getTriggerClass(dayTrigger, achievable, result.limitUpRate));
-                        // 主触发价：T+0 基于昨收（calcTriggerPrice）；T+N 基于现价
-                        const mainPrice = (day === 0 && UnusualCalculator.calcTriggerPrice)
-                            ? UnusualCalculator.calcTriggerPrice(result.price, result.prevClose, day, dayTrigger, dominantRule)
+                        // 主触发价：优先 dayLines 预计算值（T+0基于昨收/未来日基于现价）；回退按现价
+                        const mainPrice = (line && line.mainPrice !== undefined)
+                            ? line.mainPrice
                             : (result.price != null ? result.price * (1 + dayTrigger / 100) : null);
                         const hover = [];
                         if (mainPrice !== null && mainPrice !== undefined) hover.push('触发价 ' + mainPrice.toFixed(2));

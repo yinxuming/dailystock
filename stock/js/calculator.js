@@ -559,8 +559,13 @@ const UnusualCalculator = (function () {
         tradeDayOffset = tradeDayOffset || 0;
         const allRuleResults = [];
 
+        // TODO45.5：展示第 d 列对应"目标交易日+d"，而 calcRuleTriggers 以 K线末日为 T+0，
+        // 故需多算 tradeDayOffset 天，使 triggers[offset+d] 存在（target=明日时 offset=1）。
+        const offset = tradeDayOffset || 0;
+        const calcDays = forwardDays + offset;
+
         for (const rule of RULES) {
-            const calcResult = calcRuleTriggers(klines, indexKlines, rule, forwardDays);
+            const calcResult = calcRuleTriggers(klines, indexKlines, rule, calcDays);
             allRuleResults.push({
                 ruleName: rule.name,
                 tagClass: rule.tagClass,
@@ -662,36 +667,40 @@ const UnusualCalculator = (function () {
         }
 
         // TODO44.2(q3)：逐日多规则取最小。
-        // - T+0 用 dominantRule（最紧急）的展示值（保持同花顺口径不变）；
-        // - T+N(N>=1) 在 100/200 规则间取最小——某规则随窗口滑动触发值上升超过另一条时，
-        //   自动切换到更低者，复现异动查查"100异动先升、随后由200异动接住并收敛"的行为。
+        // TODO45.5：展示第 d 列对应"目标交易日+d"= K线末日后第 (offset+d) 天，故取 triggers[offset+d]。
+        // - 仅当 offset+d=0（展示当日=K线末日，即 offset=0 且 d=0）用 dominantRule 当日总涨幅（同花顺口径）；
+        // - 其余（相对K线末日的未来日）在 100/200 规则间取最小——复现异动查查"100异动先升→200接住收敛"。
         const dayMin = new Array(forwardDays).fill(null);
-        for (let day = 0; day < forwardDays; day++) {
-            if (day === 0) {
-                dayMin[0] = (dominantRule.displayTriggers || dominantRule.triggers)[0];
+        for (let d = 0; d < forwardDays; d++) {
+            const ci = offset + d;
+            if (ci === 0) {
+                dayMin[d] = (dominantRule.displayTriggers || dominantRule.triggers)[0];
                 continue;
             }
             let min = null;
             for (const rr of allRuleResults) {
-                const v = (rr.displayTriggers || rr.triggers)[day];
+                const v = (rr.displayTriggers || rr.triggers)[ci];
                 if (v === null || v === undefined) continue;
                 if (min === null || v < min) min = v;
             }
-            dayMin[day] = min;
+            dayMin[d] = min;
         }
 
         // TODO44.2：纳入「十日同向异动线」（仅100异动主导股，据异动查查口径）。
-        // 同向线 = 触发下一次同向普通异动的涨幅；+20%需按涨停幅度累加，故生效天数
-        // K = ceil(0.20/涨停幅度)（主板10%→T+1/T+2，创业板·科创板20%→T+1）。
+        // 同向线对应 calc 第 1..K 天（K=ceil(0.20/涨停幅度)，主板10%→2天，创业板·科创板20%→1天）；
+        // TODO45.5：展示第 d 列的 calc 索引 = offset+d，故同向线落在展示列 d 满足 offset+d∈[1,K]。
         let txPct = null;   // 同向线涨幅%（供 dayLines 展示各规则触发价用）
-        let txK = 0;        // 同向线生效至第几天
+        let txK = 0;        // 同向线生效至第几个 calc 日
         if (dominantRule.ruleName === '100异动') {
             const tx = calcTongxiangLine(klines, indexKlines, stock.code);
             if (tx !== null && tx !== undefined) {
                 txPct = tx;
                 txK = Math.max(1, Math.ceil(0.20 / limitUpRate));
-                for (let d = 1; d <= Math.min(txK, forwardDays - 1); d++) {
-                    if (dayMin[d] === null || dayMin[d] === undefined || txPct < dayMin[d]) dayMin[d] = txPct;
+                for (let d = 0; d < forwardDays; d++) {
+                    const ci = offset + d;
+                    if (ci >= 1 && ci <= txK) {
+                        if (dayMin[d] === null || dayMin[d] === undefined || txPct < dayMin[d]) dayMin[d] = txPct;
+                    }
                 }
             }
         }
@@ -717,26 +726,40 @@ const UnusualCalculator = (function () {
         const price = klines.length > 0 ? klines[klines.length - 1].close : null;
         const prevClose = klines.length > 1 ? klines[klines.length - 2].close : null;
 
-        // TODO44.4：逐日各规则触发价（dayLines），供渲染层按异动查查格式展示多行：
-        //   涨幅% / 触发价 / 10日触发价 / 30日触发价 / 10日同向异动线(如有)
-        // T+N(N>=1) 各规则触发价 = 现价×(1+该规则触发涨幅/100)（未来日昨收=现价）。
+        // TODO44.4/45.5：逐日各规则触发价（dayLines），供渲染层按异动查查格式展示多行：
+        //   涨幅% / 触发价 / 10日触发价 / 30日触发价 / 10日同向异动线(如有)。
+        // TODO45.5：展示第 d 列取 calc 索引 ci=offset+d；ci=0（展示当日=K线末日）为 T+0 单值口径，
+        //   ci>=1（未来日）才展开各规则触发价（=现价×(1+该规则触发涨幅/100)，未来日昨收=现价）。
+        // 同时预计算 mainPrice（主触发价）与 achievable（可触发性），渲染层直接取用，避免再判 offset。
         const rule100 = allRuleResults.find(r => r.ruleName === '100异动');
         const rule200 = allRuleResults.find(r => r.ruleName === '200异动');
         const dayLines = new Array(forwardDays).fill(null);
         for (let d = 0; d < forwardDays; d++) {
-            if (d === 0) {
-                // T+0 保持同花顺单值口径（当日总涨幅/额外涨幅），不展开各规则行
-                dayLines[0] = { minPct: dayMin[0], r100: null, r200: null, tx: null };
+            const ci = offset + d;
+            const minPct = dayMin[d];
+            // 可触发性：ci=0 用复合当日总涨幅(dominantRule.triggers[0])判断；ci>=1 用当日涨幅
+            const achRaw = (ci === 0) ? dominantRule.triggers[0] : minPct;
+            const achievable = isTriggerAchievable(achRaw, limitUpRate, ci);
+            // 主触发价：ci=0 基于昨收（calcTriggerPrice 处理当日总涨幅/额外涨幅）；ci>=1 基于现价
+            const mainPrice = (minPct === null || minPct === undefined || price === null)
+                ? null
+                : (ci === 0
+                    ? calcTriggerPrice(price, prevClose, 0, minPct, dominantRule)
+                    : price * (1 + minPct / 100));
+            if (ci === 0) {
+                dayLines[d] = { minPct, mainPrice, r100: null, r200: null, tx: null, achievable };
                 continue;
             }
-            const t100 = rule100 ? rule100.triggers[d] : null;
-            const t200 = rule200 ? rule200.triggers[d] : null;
-            const tx = (txPct !== null && d >= 1 && d <= txK && price !== null) ? price * (1 + txPct / 100) : null;
+            const t100 = rule100 ? rule100.triggers[ci] : null;
+            const t200 = rule200 ? rule200.triggers[ci] : null;
+            const tx = (txPct !== null && ci >= 1 && ci <= txK && price !== null) ? price * (1 + txPct / 100) : null;
             dayLines[d] = {
-                minPct: dayMin[d],
+                minPct,
+                mainPrice,
                 r100: (t100 !== null && t100 !== undefined && price !== null) ? price * (1 + t100 / 100) : null,
                 r200: (t200 !== null && t200 !== undefined && price !== null) ? price * (1 + t200 / 100) : null,
-                tx: tx
+                tx: tx,
+                achievable: achievable
             };
         }
 
