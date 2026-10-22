@@ -445,10 +445,11 @@ const UnusualCalculator = (function () {
         const remainingChangePcts = remainingKl.map(k => (typeof k.changePercent === 'number' ? k.changePercent : 0));
         const slidChangePcts = [...remainingChangePcts, ...new Array(dayOffset).fill(0)].slice(-windowSize);
 
-        // 关键改进：模拟T+1日的指数价 = 当前指数价 * (1 + 当前日指数涨跌幅)
-        // 如果currentIndexChange未提供，则复用当前指数价（退化为旧逻辑）
-        const idxChange = (typeof currentIndexChange === 'number') ? currentIndexChange : 0;
-        const simulatedIndexPrice = currentIndexPrice * (1 + idxChange / 100);
+        // TODO45.6：未来日指数走平（=当前指数价），对齐异动查查口径。
+        // 旧实现按"当日指数涨跌幅"模拟未来指数价（currentIndexPrice*(1+idxChange)），
+        // 当基准指数当日下跌时会使未来日指数被低估、触发值系统性偏低（九阳2026-10-22 T+2+ 偏低~1%）。
+        // 异动查查的 T+N 触发价仅随"低点基准价滑出窗口而上升"，指数按走平处理。
+        const simulatedIndexPrice = currentIndexPrice;
 
         const slidIndexPrices = slidDates.map(d => {
             if (d === futureDatePlaceholder) return simulatedIndexPrice;
@@ -523,20 +524,25 @@ const UnusualCalculator = (function () {
 
         const cur = klines[T].close;
         const idxT = idxMap.get(klines[T].date) || 0;
-        // 最近3日 [T-2, T-1, T] 最低收盘价及其日期
-        let low = klines[T].close, lowDate = klines[T].date;
+        // 1) 判断当前3日窗口[T-2,T-1,T]是否已触发同向普通异动（最低点起算偏离>=20%）
+        let low3 = klines[T].close, low3Date = klines[T].date;
         for (let i = Math.max(0, T - 2); i <= T; i++) {
-            if (klines[i].close < low) { low = klines[i].close; lowDate = klines[i].date; }
+            if (klines[i].close < low3) { low3 = klines[i].close; low3Date = klines[i].date; }
         }
-        const idxLow = idxMap.get(lowDate) || idxT;
-        const devRecent = (cur / low - 1) - ((idxT && idxLow) ? (idxT / idxLow - 1) : 0);
+        const idxLow3 = idxMap.get(low3Date) || idxT;
+        const devRecent = (cur / low3 - 1) - ((idxT && idxLow3) ? (idxT / idxLow3 - 1) : 0);
 
         let linePrice;
         if (devRecent >= 0.20) {
-            // 最近3日已触发同向异动 → 下一次从现价起算 +20%（指数投影取当日，比例=1）
+            // 已触发 → 下一次同向从现价起算 +20%（指数走平，比例=1）
             linePrice = cur * 1.20;
         } else {
-            // 未触发 → 以最近3日最低价为基准（指数投影取当日）
+            // 2) 未触发 → 下一次同向是 T+1 新产生的3日偏离，其窗口=[T-1,T,T+1]，
+            //    起算点=窗口内最低收盘价；T+1 为触发高价，故最低=min(close[T-1],close[T])。
+            //    （旧实现取近3日[T-2,T-1,T]最低，会把 T-2 低点误纳入导致基准偏低。）
+            let low = klines[T].close, lowDate = klines[T].date;
+            if (T >= 1 && klines[T - 1].close < low) { low = klines[T - 1].close; lowDate = klines[T - 1].date; }
+            const idxLow = idxMap.get(lowDate) || idxT;
             const ratio = (idxT && idxLow) ? (idxT / idxLow) : 1;
             linePrice = low * (0.20 + ratio);
         }
@@ -687,18 +693,15 @@ const UnusualCalculator = (function () {
         }
 
         // TODO44.2：纳入「十日同向异动线」（仅100异动主导股，据异动查查口径）。
-        // 同向线对应 calc 第 1..K 天（K=ceil(0.20/涨停幅度)，主板10%→2天，创业板·科创板20%→1天）；
-        // TODO45.5：展示第 d 列的 calc 索引 = offset+d，故同向线落在展示列 d 满足 offset+d∈[1,K]。
+        // 同向线 = 触发下一次同向普通异动的涨幅；据异动查查「十日同向异动红线」仅在 T+1 展示
+        // （下一次同向临界值，单值），不蔓延到 T+2+。故展示第d列仅在 ci=offset+d==1 时纳入。
         let txPct = null;   // 同向线涨幅%（供 dayLines 展示各规则触发价用）
-        let txK = 0;        // 同向线生效至第几个 calc 日
         if (dominantRule.ruleName === '100异动') {
             const tx = calcTongxiangLine(klines, indexKlines, stock.code);
             if (tx !== null && tx !== undefined) {
                 txPct = tx;
-                txK = Math.max(1, Math.ceil(0.20 / limitUpRate));
                 for (let d = 0; d < forwardDays; d++) {
-                    const ci = offset + d;
-                    if (ci >= 1 && ci <= txK) {
+                    if (offset + d === 1) {
                         if (dayMin[d] === null || dayMin[d] === undefined || txPct < dayMin[d]) dayMin[d] = txPct;
                     }
                 }
@@ -752,7 +755,7 @@ const UnusualCalculator = (function () {
             }
             const t100 = rule100 ? rule100.triggers[ci] : null;
             const t200 = rule200 ? rule200.triggers[ci] : null;
-            const tx = (txPct !== null && ci >= 1 && ci <= txK && price !== null) ? price * (1 + txPct / 100) : null;
+            const tx = (txPct !== null && ci === 1 && price !== null) ? price * (1 + txPct / 100) : null;
             dayLines[d] = {
                 minPct,
                 mainPrice,
