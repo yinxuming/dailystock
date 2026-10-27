@@ -512,14 +512,32 @@ const UnusualCalculator = (function () {
         const redLine = isGem ? 3 : 4;   // 主板4次 / 创业板·科创板3次
 
         // 近10个交易日：3日累计偏离 >= +20% 的次数（同向上涨）
-        let cnt = 0;
-        for (let i = Math.max(3, n - 10); i < n; i++) {
+        // TODO47：扣除「窗口前同连续段」的合格结尾日——异动查查按 occurrence 计数，
+        // 连续合格结尾日属同一波上涨；若该连续段在窗口左侧仍有延伸（即这波上涨在进入
+        // 10日窗口前就已开始），延伸部分不计入窗口内次数。
+        // 实证（腾讯K线对照异动查查 2026-10-27）：
+        //   慈文10-27 窗口内4个合格日(10-14/15/16/19)，但10-12/10-13同段延续→实计2次，
+        //     与异动查查「2/4、同向线不进触发线(应取10日100%线77.45%)」一致；
+        //   百洋10-26 窗口内3个 + 10-12延续→实计2次→同向线不纳入（T+1应52.68%即100%线）；
+        //   海洋王10-27 窗口内4个无延续→计入，同向线13.98与我方值一致、且不影响T+1最小值。
+        const devAt = (i) => {
             const i3 = idxMap.get(klines[i].date);
             const i0 = idxMap.get(klines[i - 3].date);
             const stockG = klines[i].close / klines[i - 3].close - 1;
             const idxG = (i3 && i0) ? (i3 / i0 - 1) : 0;
-            if (stockG - idxG >= 0.20) cnt++;
+            return stockG - idxG;
+        };
+        let cnt = 0;
+        for (let i = Math.max(3, n - 10); i < n; i++) {
+            if (devAt(i) >= 0.20) cnt++;
         }
+        // 扣除窗口前紧邻的连续合格结尾日（同一波上涨在窗口左侧的延伸）
+        let ext = 0;
+        for (let i = Math.max(3, n - 10) - 1; i >= 3; i--) {
+            if (devAt(i) >= 0.20) ext++;
+            else break;
+        }
+        cnt -= ext;
         // TODO46反馈校正：门槛由 cnt>=红线-1 改为 cnt>=红线。
         // 实证（腾讯K线对照）：百洋10-21/10-22 cnt=4→同向线显示（已验证对齐异动查查）；
         // 10-26 cnt=3（10-13/14/15 同一连续暴涨的重叠3日窗口）→ 异动查查不再把同向线计入最小值
