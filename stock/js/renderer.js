@@ -509,19 +509,28 @@ const Renderer = (function () {
                     trig.className = dominantRule.triggered ? 'tag-triggered-yes' : 'tag-triggered-no';
                     trig.textContent = dominantRule.triggered ? '已触发' : '未触发';
                     tdUnusual.appendChild(trig);
-                    // TODO46：预估可连板汇总（首链到顶板数 / 窗口内未到顶则显示已连板数+"+"）
+                    // TODO46：预估可连板汇总（最长连续涨停段；若另有更早的零散可涨停日，title 补充说明）
                     const bs = result.boardSummary;
-                    if (bs && (bs.hitIdx >= 0 || bs.maxSeq > 0)) {
+                    if (bs && bs.maxSeq > 0) {
                         tdUnusual.appendChild(document.createElement('br'));
                         const bd = document.createElement('span');
                         bd.className = 'u-board u-board-yes';
-                        if (bs.hitIdx >= 0) {
-                            bd.textContent = '预估连' + bs.hitSeq + '板';
-                            bd.title = '自下一交易日起若每日涨停，最多连 ' + bs.hitSeq + ' 板，第 ' + bs.hitSeq + ' 板即触发异动（粉色单元格=允许涨停）';
-                        } else {
-                            bd.textContent = '预估连' + bs.maxSeq + '板+';
-                            bd.title = '未来 ' + bs.maxSeq + ' 板内涨停均不触发异动（窗口内未到顶）';
+                        bd.textContent = '预估连' + bs.maxSeq + '板';
+                        const runStartLabel = headerBaseDate ? getTradeDateLabel(headerBaseDate, bs.maxRunStart) : ('T+' + (bs.maxRunStart + 1));
+                        let tip = '自 ' + runStartLabel + ' 起可连续涨停 ' + bs.maxSeq + ' 板（粉色=该日涨停不触发异动）';
+                        if (bs.firstIdx >= 0 && bs.firstIdx < bs.maxRunStart) {
+                            const firstLabel = headerBaseDate ? getTradeDateLabel(headerBaseDate, bs.firstIdx) : ('T+' + (bs.firstIdx + 1));
+                            tip += '；另 ' + firstLabel + ' 也可涨停';
                         }
+                        bd.title = tip;
+                        tdUnusual.appendChild(bd);
+                    } else if (bs && result.board && result.board.some(b => b && b.estClose !== null && b.estClose !== undefined)) {
+                        // 窗口内无任何"允许涨停"日（每日涨停均将触发异动）
+                        tdUnusual.appendChild(document.createElement('br'));
+                        const bd = document.createElement('span');
+                        bd.className = 'u-board u-board-no';
+                        bd.textContent = '无法连板';
+                        bd.title = '后续各交易日涨停均将触发异动';
                         tdUnusual.appendChild(bd);
                     }
                 }

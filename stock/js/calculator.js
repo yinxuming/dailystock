@@ -794,12 +794,11 @@ const UnusualCalculator = (function () {
             dominantRule: dominantRule.ruleName,
             dayMin,   // TODO44.2：逐日多规则最小触发值（day0=dominantRule展示值，day>=1=100/200取最小）
             dayLines, // TODO44.4：逐日各规则触发价（异动查查多行格式：10日/30日/同向线）
-            board: boardResult.board,          // TODO46：逐日预估连板 {ok(粉红连板中),hit(该板涨停即触发),seq(板序号),estClose(涨停预估收盘价)}
-            boardSummary: {                    // TODO46：汇总（maxSeq=最大连续粉红板数；hitIdx/hitSeq=首链到顶日及板数）
+            board: boardResult.board,          // TODO46：逐日预估连板 {ok(粉红=允许涨停),seq(连续板序号),estClose(预估收盘价)}
+            boardSummary: {                    // TODO46：汇总（maxSeq=最长连续涨停板数；maxRunStart=该连续段起始展示列；firstIdx=首个粉红列）
                 maxSeq: boardResult.maxSeq,
-                firstIdx: boardResult.firstIdx,
-                hitIdx: boardResult.hitIdx,
-                hitSeq: boardResult.hitSeq
+                maxRunStart: boardResult.maxRunStart,
+                firstIdx: boardResult.firstIdx
             }
         };
     }
@@ -807,13 +806,13 @@ const UnusualCalculator = (function () {
     /**
      * TODO46：预估可连板链（纯函数，供 analyzeStock / 渲染层 / Node 测试复用）
      *
-     * 模型（2026-10-27 按部署实测反馈两轮校正）：
-     * - 粉红(ok) = 该日"允许涨停"= 涨停仍不触发异动（连板进行中）；
-     * - 到顶(hit) = 该板涨停即触发异动（连板累计价 E 追上触发价）；
-     * - 只标记第一条连板链：从起点假设每日涨停，E 逐日 ×(1+涨停幅度) 递增，
-     *   E < 触发价 → 粉红（序号+1）；E ≥ 触发价 → 该板到顶（第 seq+1 板涨停即触发），链终结，
-     *   **后续日期一律不再标记**——该连板场景已结束（用户反馈"不能连板的背景也标红了"即指
-     *   旧实现在到顶后重启第二条链造成的误标；复牌后的新一轮偏离周期超出本窗口预判范围）。
+     * 模型（2026-10-27 按用户红框标注最终校正——即原 TODO46 第1点"开盘=昨收/预估收盘"规则）：
+     * - 预估收盘价链条：当日开盘 = 前一日预估收盘；
+     *   · 该日涨停价（前一日预估收盘 ×(1+涨停幅度)）< 该日异动触发价 → **可以涨停（粉红）**，
+     *     预估收盘 = 涨停价（连板序号+1）；
+     *   · 否则 → 不能涨停（涨停即触发异动），预估收盘按"最大允许涨幅（异动限制）"**封顶于触发价**，
+     *     连板序号归零；后续又可涨停时重新起算（序号从1重计）。
+     * - 这正是用户标注的算法：海洋王"10.30：昨日极限13.78×1.1=15.158<15.17可以涨停"。
      * - ci=0（展示当日=K线末日）从真实昨收起算；触发价取该日 mainPrice（T+0基于昨收/未来日基于现价），口径自洽。
      *
      * @param {Array<number|null>} dayMin 逐日展示触发涨幅%（展示第d列）
@@ -822,49 +821,43 @@ const UnusualCalculator = (function () {
      * @param {number|null} price 现价（最新收盘价）
      * @param {number|null} prevClose 昨收价
      * @param {number} limitUpRate 单日涨停幅度（如0.10）
-     * @returns {{board:Array<{ok:boolean,hit:boolean,seq:number,estClose:number|null}>, maxSeq:number, firstIdx:number, hitIdx:number, hitSeq:number}}
-     *   ok=粉红(连板中) / hit=该板涨停即触发异动 / seq=板序号 / estClose=该日涨停预估收盘价；
-     *   maxSeq=最大连续粉红板数，firstIdx=首个粉红列，hitIdx/hitSeq=首链到顶日及其板数（-1/0=窗口内未到顶）
+     * @returns {{board:Array<{ok:boolean,seq:number,estClose:number|null}>, maxSeq:number, maxRunStart:number, firstIdx:number}}
+     *   ok=粉红(允许涨停) / seq=当前连续涨停板序号 / estClose=该日预估收盘价（可涨停=涨停价；不可涨停=触发价封顶）；
+     *   maxSeq=最长连续涨停板数，maxRunStart=该连续段的起始展示列，firstIdx=首个粉红列（均 -1=无粉红）
      */
     function calcBoardChain(dayMin, dayPrices, offset, price, prevClose, limitUpRate) {
         const n = dayMin ? dayMin.length : 0;
         const lu = (limitUpRate === null || limitUpRate === undefined) ? 0.10 : limitUpRate;
-        let E = (price === null || price === undefined) ? null : price;  // 连板累计价游标
-        let seq = 0;
-        let ended = false;   // TODO46反馈(2026-10-27)：首链已到顶——后续日期一律不再标记（连板场景已终结）
+        let est = (price === null || price === undefined) ? null : price;  // 预估收盘价游标（=次日昨收）
+        let seq = 0;                 // 当前连续涨停板序号
         const board = new Array(n).fill(null);
-        let maxSeq = 0, firstIdx = -1, hitIdx = -1, hitSeq = 0;
+        let maxSeq = 0, maxRunStart = -1, firstIdx = -1;
         for (let d = 0; d < n; d++) {
             const ci = offset + d;
-            if (ci === 0 && prevClose !== null && prevClose !== undefined) E = prevClose; // 展示当日从真实昨收起算
+            if (ci === 0 && prevClose !== null && prevClose !== undefined) est = prevClose; // 展示当日从真实昨收起算
             const trigPrice = dayPrices ? dayPrices[d] : null;
-            if (ended) {
-                // 连板已到顶终结：该连板场景结束，后续日期不参与标记
-                board[d] = { ok: false, hit: false, seq: 0, estClose: null };
-                continue;
-            }
-            if (E === null || trigPrice === null || trigPrice === undefined) {
+            if (est === null || trigPrice === null || trigPrice === undefined) {
                 // 数据不足：不标记，价格按涨停推进保持链条连续
-                if (E !== null) E = E * (1 + lu);
-                board[d] = { ok: false, hit: false, seq: 0, estClose: E };
+                if (est !== null) est = est * (1 + lu);
+                board[d] = { ok: false, seq: 0, estClose: null };
                 continue;
             }
-            E = E * (1 + lu);   // 该日涨停预估收盘价（连板涨幅依次递增）
-            if (E < trigPrice) {
-                // 涨停仍不触发异动 → 允许涨停（粉红），连板继续
+            const luPrice = est * (1 + lu);   // 该日涨停价
+            if (luPrice < trigPrice) {
+                // 可以涨停（涨停价未及异动触发价）→ 粉红；预估收盘=涨停价，连板序号+1
                 seq += 1;
-                board[d] = { ok: true, hit: false, seq: seq, estClose: E };
-                if (seq > maxSeq) maxSeq = seq;
+                est = luPrice;
+                board[d] = { ok: true, seq: seq, estClose: est };
                 if (firstIdx < 0) firstIdx = d;
+                if (seq > maxSeq) { maxSeq = seq; maxRunStart = d - seq + 1; }
             } else {
-                // 涨停即触发异动 → 连板到顶（第 seq+1 板），链终结（不再重启第二条链）
-                board[d] = { ok: false, hit: true, seq: seq + 1, estClose: E };
-                if (hitIdx < 0) { hitIdx = d; hitSeq = seq + 1; }
-                ended = true;
+                // 不能涨停（涨停即触发异动）→ 预估收盘按"最大允许涨幅（异动限制）"封顶于触发价；序号归零
                 seq = 0;
+                est = trigPrice;
+                board[d] = { ok: false, seq: 0, estClose: trigPrice };
             }
         }
-        return { board, maxSeq, firstIdx, hitIdx, hitSeq };
+        return { board, maxSeq, maxRunStart, firstIdx };
     }
 
     /**
