@@ -509,6 +509,22 @@ const Renderer = (function () {
                     trig.className = dominantRule.triggered ? 'tag-triggered-yes' : 'tag-triggered-no';
                     trig.textContent = dominantRule.triggered ? '已触发' : '未触发';
                     tdUnusual.appendChild(trig);
+                    // TODO46：预估可连板汇总（最大连板数 / 最早可连板日；无法连板则明示）
+                    const bs = result.boardSummary;
+                    if (bs) {
+                        tdUnusual.appendChild(document.createElement('br'));
+                        const bd = document.createElement('span');
+                        if (bs.maxSeq > 0) {
+                            bd.className = 'u-board u-board-yes';
+                            bd.textContent = '预估连' + bs.maxSeq + '板';
+                            bd.title = '自首个粉色单元格起涨停即可触发异动，预估最大连板 ' + bs.maxSeq + ' 板（详见各粉色单元格悬浮提示）';
+                        } else {
+                            bd.className = 'u-board u-board-no';
+                            bd.textContent = '无法连板';
+                            bd.title = '后续各交易日涨停均无法触发异动';
+                        }
+                        tdUnusual.appendChild(bd);
+                    }
                 }
                 tr.appendChild(tdUnusual);
 
@@ -532,6 +548,10 @@ const Renderer = (function () {
 
                     if (dayTrigger !== null && dayTrigger !== undefined) {
                         td.classList.add(getTriggerClass(dayTrigger, achievable, result.limitUpRate));
+                        // TODO46：预估可连板（涨停即可触发异动）→ 粉红背景提示
+                        const boardDay = result.board ? result.board[day] : null;
+                        const boardOk = !!(boardDay && boardDay.ok);
+                        if (boardOk) td.classList.add('trigger-board');
                         // 主触发价：优先 dayLines 预计算值（T+0基于昨收/未来日基于现价）；回退按现价
                         const mainPrice = (line && line.mainPrice !== undefined)
                             ? line.mainPrice
@@ -565,6 +585,14 @@ const Renderer = (function () {
                         // 不可触发的加title提示（TODO16.3.1：取消删除线样式，仅提示）
                         if (!achievable && dayTrigger > 0) {
                             td.title = (td.title ? td.title + '\n' : '') + '超过' + (day + 1) + '天涨停限制，不可能触发';
+                        }
+                        // TODO46：连板预估提示（粉红格：第N板+预估收盘价；断链日说明涨停也触发不了）
+                        if (boardDay && boardDay.estClose !== null && boardDay.estClose !== undefined) {
+                            if (boardOk) {
+                                td.title = (td.title ? td.title + '\n' : '') + '预估连板：第' + boardDay.seq + '板（预估收盘价 ' + boardDay.estClose.toFixed(2) + '）';
+                            } else if (dayTrigger > 0 && !achievable) {
+                                td.title = (td.title ? td.title + '\n' : '') + '预估收盘价 ' + boardDay.estClose.toFixed(2) + '（涨停亦无法触发，连板中断）';
+                            }
                         }
                     } else {
                         td.textContent = '--';

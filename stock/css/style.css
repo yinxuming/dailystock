@@ -510,6 +510,29 @@ body.embedded .app-layout {
     font-style: italic;
 }
 
+/* ===== TODO46：预估可连板提示（涨停即可触发异动 → 粉红背景） ===== */
+#stockTable td.trigger-board {
+    background: rgba(236, 72, 153, 0.20);
+}
+#stockTable tbody tr:nth-child(even) td.trigger-board {
+    background: rgba(236, 72, 153, 0.28);
+}
+#stockTable tbody tr:hover td.trigger-board {
+    background: rgba(236, 72, 153, 0.38);
+}
+
+/* TODO46：异动列"预估连板/无法连板"汇总小字 */
+.u-board {
+    font-size: 11px;
+    font-weight: 600;
+}
+.u-board-yes {
+    color: #f472b6;   /* 粉红，与粉红背景提示呼应 */
+}
+.u-board-no {
+    color: #64748b;
+}
+
 /* TODO16.3.1：超过涨停限制的取消删除线，正常显示（仅title提示不可能触发）
    TODO27.2：不再置灰！renderer.js getTriggerClass 已移除 !achievable 分支，
    不可触发的触发值也按值大小分档显示 danger/warning/normal；

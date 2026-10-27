@@ -766,6 +766,9 @@ const UnusualCalculator = (function () {
             };
         }
 
+        // TODO46：预估可连板链（粉红背景提示 + 汇总最大连板数/最早可连板日）
+        const boardResult = calcBoardChain(dayMin, offset, price, prevClose, limitUpRate);
+
         return {
             code: stock.code,
             name: stock.name,
@@ -781,8 +784,78 @@ const UnusualCalculator = (function () {
             urgency,
             dominantRule: dominantRule.ruleName,
             dayMin,   // TODO44.2：逐日多规则最小触发值（day0=dominantRule展示值，day>=1=100/200取最小）
-            dayLines  // TODO44.4：逐日各规则触发价（异动查查多行格式：10日/30日/同向线）
+            dayLines, // TODO44.4：逐日各规则触发价（异动查查多行格式：10日/30日/同向线）
+            board: boardResult.board,          // TODO46：逐日预估连板 {ok(粉红),seq(连板序号),estClose(预估收盘价)}
+            boardSummary: {                    // TODO46：汇总（最大连板数、最早可连板的展示列索引）
+                maxSeq: boardResult.maxSeq,
+                firstIdx: boardResult.firstIdx
+            }
         };
+    }
+
+    /**
+     * TODO46：预估可连板链（纯函数，供 analyzeStock / 渲染层 / Node 测试复用）
+     *
+     * 需求（doc TODO46）：异动监控增加"预估可连板数"背景提示——某日"涨停即可触发异动"时
+     * 该单元格标粉红；从首个粉红日起按连板涨幅依次递增推算预估收盘价，直至无法连板
+     * （连板累计归零），后续又能连板时重新起算。
+     *
+     * 口径（经调研论证，用户描述的第1点"开盘=昨收"模型落地）：
+     * - 「可涨停触发」= 该日触发涨幅 minPct 满足 0 < minPct <= 单日涨停幅度（limitUpRate）。
+     *   即当天最多涨一个涨停板就能触发异动 → ok=true（粉红）。
+     * - 预估收盘价链：当日开盘 = 前一日预估收盘。
+     *   · 可涨停触发日：预估收盘 = 前一日预估收盘 × (1 + 涨停幅度)（连板涨幅依次递增），连板序号 +1；
+     *   · 不可涨停触发日：连板序号归零（链条断），预估收盘 = 前一日预估收盘 × (1 + minPct/100)
+     *     ——涨到"异动限制线"（触发所需涨幅）即用户所述"按最大允许涨幅（异动限制）计算"；
+     *   · 无触发值(null)日：不粉红、序号归零，价格保守按涨停推进。
+     * - 展示第 d 列对应 calc 索引 ci=offset+d；ci=0（展示当日=K线末日）从真实昨收起算，
+     *   ci>=1（未来日）从现价起算（未来日昨收=现价，与触发值口径一致）。
+     * - 已触发（minPct=0）属既成事实，不计入预估连板（从未来首个粉红日起算）。
+     *
+     * @param {Array<number|null>} dayMin 逐日展示触发涨幅%（展示第d列的值）
+     * @param {number} offset 展示第d列对应的calc索引偏移（ci=offset+d）
+     * @param {number|null} price 现价（最新收盘价）
+     * @param {number|null} prevClose 昨收价
+     * @param {number} limitUpRate 单日涨停幅度（如0.10）
+     * @returns {{board: Array<{ok:boolean,seq:number,estClose:number|null}>, maxSeq:number, firstIdx:number}}
+     */
+    function calcBoardChain(dayMin, offset, price, prevClose, limitUpRate) {
+        const n = dayMin ? dayMin.length : 0;
+        const limitUpPct = (limitUpRate || 0.10) * 100;
+        let estClose = (price === null || price === undefined) ? null : price;  // 预估昨收游标
+        let chain = 0;
+        const board = new Array(n).fill(null);
+        for (let d = 0; d < n; d++) {
+            const ci = offset + d;
+            if (ci === 0 && prevClose !== null && prevClose !== undefined) estClose = prevClose; // T+0 从真实昨收起算
+            const minPct = dayMin[d];
+            if (minPct === null || minPct === undefined) {
+                // 无触发值：不粉红、链条断；价格保守按涨停推进，保持后续推算连续
+                chain = 0;
+                if (estClose !== null) estClose = estClose * (1 + (limitUpRate || 0.10));
+                board[d] = { ok: false, seq: 0, estClose: estClose };
+                continue;
+            }
+            if (minPct > 0 && minPct <= limitUpPct) {
+                // 可涨停触发 → 粉红；按连板涨幅递增
+                chain += 1;
+                if (estClose !== null) estClose = estClose * (1 + (limitUpRate || 0.10));
+                board[d] = { ok: true, seq: chain, estClose: estClose };
+            } else {
+                // 无法连板（涨停也触发不了，或已触发minPct=0）→ 序号归零，按异动限制线推进
+                chain = 0;
+                if (estClose !== null) estClose = estClose * (1 + minPct / 100);
+                board[d] = { ok: false, seq: 0, estClose: estClose };
+            }
+        }
+        let maxSeq = 0, firstIdx = -1;
+        for (let d = 0; d < n; d++) {
+            if (board[d] && board[d].ok) {
+                if (board[d].seq > maxSeq) maxSeq = board[d].seq;
+                if (firstIdx < 0) firstIdx = d;
+            }
+        }
+        return { board, maxSeq, firstIdx };
     }
 
     /**
@@ -885,6 +958,7 @@ const UnusualCalculator = (function () {
         analyzeStocks,
         calcTriggerPrice,
         calcTongxiangLine,
+        calcBoardChain,   // TODO46：预估可连板链（纯函数）
         getIndexSecid,
         // 测试用
         findLocalMinima,
