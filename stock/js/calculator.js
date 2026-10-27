@@ -807,11 +807,13 @@ const UnusualCalculator = (function () {
     /**
      * TODO46：预估可连板链（纯函数，供 analyzeStock / 渲染层 / Node 测试复用）
      *
-     * 模型（2026-10-27 按用户反馈校正——粉红 = 该日"允许涨停"= 涨停仍不触发异动，连板进行中）：
-     * - 从起点（未来首日昨收=现价）起假设每日涨停，连板累计价 E 逐日 ×(1+涨停幅度) 递增；
-     * - 该日 E < 异动触发价（dayLines.mainPrice，绝对价格）：涨停不触发异动 → 允许涨停（粉红），连板继续（序号+1）；
-     * - 该日 E ≥ 触发价：涨停即触发异动 → 连板链到顶（第 seq+1 板触发），累计归零（E 重置回现价），
-     *   后续又可连板时重新起算（对应用户"连板涨幅累计价格归零/后续又可以连板时依次又开始"）。
+     * 模型（2026-10-27 按部署实测反馈两轮校正）：
+     * - 粉红(ok) = 该日"允许涨停"= 涨停仍不触发异动（连板进行中）；
+     * - 到顶(hit) = 该板涨停即触发异动（连板累计价 E 追上触发价）；
+     * - 只标记第一条连板链：从起点假设每日涨停，E 逐日 ×(1+涨停幅度) 递增，
+     *   E < 触发价 → 粉红（序号+1）；E ≥ 触发价 → 该板到顶（第 seq+1 板涨停即触发），链终结，
+     *   **后续日期一律不再标记**——该连板场景已结束（用户反馈"不能连板的背景也标红了"即指
+     *   旧实现在到顶后重启第二条链造成的误标；复牌后的新一轮偏离周期超出本窗口预判范围）。
      * - ci=0（展示当日=K线末日）从真实昨收起算；触发价取该日 mainPrice（T+0基于昨收/未来日基于现价），口径自洽。
      *
      * @param {Array<number|null>} dayMin 逐日展示触发涨幅%（展示第d列）
@@ -822,21 +824,27 @@ const UnusualCalculator = (function () {
      * @param {number} limitUpRate 单日涨停幅度（如0.10）
      * @returns {{board:Array<{ok:boolean,hit:boolean,seq:number,estClose:number|null}>, maxSeq:number, firstIdx:number, hitIdx:number, hitSeq:number}}
      *   ok=粉红(连板中) / hit=该板涨停即触发异动 / seq=板序号 / estClose=该日涨停预估收盘价；
-     *   maxSeq=最大连续粉红板数，firstIdx=首个粉红列，hitIdx/hitSeq=首条链到顶日及其板数
+     *   maxSeq=最大连续粉红板数，firstIdx=首个粉红列，hitIdx/hitSeq=首链到顶日及其板数（-1/0=窗口内未到顶）
      */
     function calcBoardChain(dayMin, dayPrices, offset, price, prevClose, limitUpRate) {
         const n = dayMin ? dayMin.length : 0;
         const lu = (limitUpRate === null || limitUpRate === undefined) ? 0.10 : limitUpRate;
         let E = (price === null || price === undefined) ? null : price;  // 连板累计价游标
         let seq = 0;
+        let ended = false;   // TODO46反馈(2026-10-27)：首链已到顶——后续日期一律不再标记（连板场景已终结）
         const board = new Array(n).fill(null);
         let maxSeq = 0, firstIdx = -1, hitIdx = -1, hitSeq = 0;
         for (let d = 0; d < n; d++) {
             const ci = offset + d;
             if (ci === 0 && prevClose !== null && prevClose !== undefined) E = prevClose; // 展示当日从真实昨收起算
             const trigPrice = dayPrices ? dayPrices[d] : null;
+            if (ended) {
+                // 连板已到顶终结：该连板场景结束，后续日期不参与标记
+                board[d] = { ok: false, hit: false, seq: 0, estClose: null };
+                continue;
+            }
             if (E === null || trigPrice === null || trigPrice === undefined) {
-                // 数据不足：不标粉红，价格按涨停推进保持后续链条连续
+                // 数据不足：不标记，价格按涨停推进保持链条连续
                 if (E !== null) E = E * (1 + lu);
                 board[d] = { ok: false, hit: false, seq: 0, estClose: E };
                 continue;
@@ -849,11 +857,11 @@ const UnusualCalculator = (function () {
                 if (seq > maxSeq) maxSeq = seq;
                 if (firstIdx < 0) firstIdx = d;
             } else {
-                // 涨停即触发异动 → 连板链到顶（第 seq+1 板），累计归零（E 重置回现价）
+                // 涨停即触发异动 → 连板到顶（第 seq+1 板），链终结（不再重启第二条链）
                 board[d] = { ok: false, hit: true, seq: seq + 1, estClose: E };
                 if (hitIdx < 0) { hitIdx = d; hitSeq = seq + 1; }
+                ended = true;
                 seq = 0;
-                E = (price === null || price === undefined) ? null : price;
             }
         }
         return { board, maxSeq, firstIdx, hitIdx, hitSeq };
