@@ -509,19 +509,18 @@ const Renderer = (function () {
                     trig.className = dominantRule.triggered ? 'tag-triggered-yes' : 'tag-triggered-no';
                     trig.textContent = dominantRule.triggered ? '已触发' : '未触发';
                     tdUnusual.appendChild(trig);
-                    // TODO46：预估可连板汇总（最大连板数 / 最早可连板日；无法连板则明示）
+                    // TODO46：预估可连板汇总（首链到顶板数 / 窗口内未到顶则显示已连板数+"+"）
                     const bs = result.boardSummary;
-                    if (bs) {
+                    if (bs && (bs.hitIdx >= 0 || bs.maxSeq > 0)) {
                         tdUnusual.appendChild(document.createElement('br'));
                         const bd = document.createElement('span');
-                        if (bs.maxSeq > 0) {
-                            bd.className = 'u-board u-board-yes';
-                            bd.textContent = '预估连' + bs.maxSeq + '板';
-                            bd.title = '自首个粉色单元格起涨停即可触发异动，预估最大连板 ' + bs.maxSeq + ' 板（详见各粉色单元格悬浮提示）';
+                        bd.className = 'u-board u-board-yes';
+                        if (bs.hitIdx >= 0) {
+                            bd.textContent = '预估连' + bs.hitSeq + '板';
+                            bd.title = '自下一交易日起若每日涨停，第 ' + bs.hitSeq + ' 板即触发异动（粉色=连板中，深粉=到顶日）';
                         } else {
-                            bd.className = 'u-board u-board-no';
-                            bd.textContent = '无法连板';
-                            bd.title = '后续各交易日涨停均无法触发异动';
+                            bd.textContent = '预估连' + bs.maxSeq + '板+';
+                            bd.title = '未来 ' + bs.maxSeq + ' 板内涨停均不触发异动（窗口内未到顶）';
                         }
                         tdUnusual.appendChild(bd);
                     }
@@ -548,10 +547,12 @@ const Renderer = (function () {
 
                     if (dayTrigger !== null && dayTrigger !== undefined) {
                         td.classList.add(getTriggerClass(dayTrigger, achievable, result.limitUpRate));
-                        // TODO46：预估可连板（涨停即可触发异动）→ 粉红背景提示
+                        // TODO46：预估可连板背景提示——ok=该日涨停仍不触发异动（连板进行中，粉红）；
+                        //   hit=该板涨停即触发异动（连板到顶，深粉红）
                         const boardDay = result.board ? result.board[day] : null;
                         const boardOk = !!(boardDay && boardDay.ok);
                         if (boardOk) td.classList.add('trigger-board');
+                        else if (boardDay && boardDay.hit) td.classList.add('trigger-board-hit');
                         // 主触发价：优先 dayLines 预计算值（T+0基于昨收/未来日基于现价）；回退按现价
                         const mainPrice = (line && line.mainPrice !== undefined)
                             ? line.mainPrice
@@ -586,12 +587,12 @@ const Renderer = (function () {
                         if (!achievable && dayTrigger > 0) {
                             td.title = (td.title ? td.title + '\n' : '') + '超过' + (day + 1) + '天涨停限制，不可能触发';
                         }
-                        // TODO46：连板预估提示（粉红格：第N板+预估收盘价；断链日说明涨停也触发不了）
+                        // TODO46：连板预估提示（粉红格=第N板连板中；到顶格=该板涨停即触发异动）
                         if (boardDay && boardDay.estClose !== null && boardDay.estClose !== undefined) {
                             if (boardOk) {
-                                td.title = (td.title ? td.title + '\n' : '') + '预估连板：第' + boardDay.seq + '板（预估收盘价 ' + boardDay.estClose.toFixed(2) + '）';
-                            } else if (dayTrigger > 0 && !achievable) {
-                                td.title = (td.title ? td.title + '\n' : '') + '预估收盘价 ' + boardDay.estClose.toFixed(2) + '（涨停亦无法触发，连板中断）';
+                                td.title = (td.title ? td.title + '\n' : '') + '预估连板：第' + boardDay.seq + '板（涨停预估收盘价 ' + boardDay.estClose.toFixed(2) + '，未及异动触发价）';
+                            } else if (boardDay.hit) {
+                                td.title = (td.title ? td.title + '\n' : '') + '第' + boardDay.seq + '板涨停即触发异动（涨停预估收盘价 ' + boardDay.estClose.toFixed(2) + ' ≥ 触发价）';
                             }
                         }
                     } else {

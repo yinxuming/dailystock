@@ -510,7 +510,7 @@ body.embedded .app-layout {
     font-style: italic;
 }
 
-/* ===== TODO46：预估可连板提示（涨停即可触发异动 → 粉红背景） ===== */
+/* ===== TODO46：预估可连板提示（粉红=该日涨停仍不触发异动，连板进行中） ===== */
 #stockTable td.trigger-board {
     background: rgba(236, 72, 153, 0.20);
 }
@@ -521,7 +521,18 @@ body.embedded .app-layout {
     background: rgba(236, 72, 153, 0.38);
 }
 
-/* TODO46：异动列"预估连板/无法连板"汇总小字 */
+/* TODO46：连板到顶日（该板涨停即触发异动）→ 深粉红 */
+#stockTable td.trigger-board-hit {
+    background: rgba(236, 72, 153, 0.40);
+}
+#stockTable tbody tr:nth-child(even) td.trigger-board-hit {
+    background: rgba(236, 72, 153, 0.48);
+}
+#stockTable tbody tr:hover td.trigger-board-hit {
+    background: rgba(236, 72, 153, 0.58);
+}
+
+/* TODO46：异动列"预估连N板"汇总小字 */
 .u-board {
     font-size: 11px;
     font-weight: 600;
