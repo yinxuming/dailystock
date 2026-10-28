@@ -396,7 +396,9 @@ const FupanScoring = (function () {
         const severe = severeDeviationRisk(stock.code, stock.name, stock.stats);
         if (severe) return severe;
         // 黑名单席位净买入（TODO24.5：用户自定义席位，净买入一票否决；净卖出不触发；
-        // 黑名单项作为关键词匹配席位名，支持从当日席位全名或短关键词拉黑）
+        // 黑名单项作为关键词匹配席位名，支持从当日席位全名或短关键词拉黑。
+        // TODO48注：否决失效的真实根因是采集端只采到卖方席位（买方黑名单席位漏采），
+        // 已在采集端修复，本处净买入语义保持原设计不变）
         if (stock.lhb && stock.lhb.onList) {
             const bl = getBlacklist();
             if (bl.length) {
