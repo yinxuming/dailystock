@@ -47,6 +47,9 @@ const App = (function () {
     let marketSub = 'focus'; // 异动监控页当前二级tab（focus=关注异动放最前 / all=市场异动，TODO19.2）
     let lastResults = [];    // 最近一次全量分析结果（含isCustom标记，双视图过滤渲染用）
     let lastTargetDate = null; // 最近一次渲染目标交易日（二级tab切换重渲染用）
+    let lastAsOfDate = null;   // 最近一次K线截断日（as-of，TODO49增量判断用）
+    let lastTradeDayOffset = null; // 最近一次交易日偏移（TODO49增量判断用）
+    let lastResultMeta = null; // 最近一次结果缓存meta（TODO49增量覆盖写回用）
 
     /**
      * 从localStorage加载配置
@@ -123,8 +126,9 @@ const App = (function () {
         const list = getCustomMonitors();
         list.push({ code: code, name: name, market: market, addedAt: Date.now() });
         saveCustomMonitors(list);
-        // 结果缓存已过时（需包含新监控股），仅清结果缓存；K线缓存保留避免重复拉取
-        StockAPI.clearResultCache();
+        // 注意：不清结果缓存——若已有已完成结果且日期上下文一致，增量计算会复用并覆盖写回；
+        // 仅当增量不可行回退全量 run(false) 时（见 addCustomMonitorIncremental）才清缓存，
+        // 避免命中旧缓存导致新增股丢失。K线缓存始终保留避免重复拉取。
         rerunAfterCustomChange();
         return true;
     }
@@ -171,12 +175,131 @@ const App = (function () {
 
     /**
      * 自定义监控增删后重新分析渲染（运行中则等本轮结束后补跑）
+     * TODO49：新增关注时改为增量计算（只算新股票并插入），不再整表重拉重算
      */
     function rerunAfterCustomChange() {
         if (isLoading) {
             pendingRerun = true;
         } else {
-            run(false);
+            addCustomMonitorIncremental();
+        }
+    }
+
+    /**
+     * TODO49：新增关注异动股票时「增量计算」——只拉取并计算新股票，插入已有结果，
+     * 不重拉/重算其余已计算好的股票（原 rerunAfterCustomChange 直接 run(false) 会整表刷新）。
+     * 前提：已有一次完成的 run 结果且日期上下文（targetDate/as-of/offset）与上次一致；
+     * 否则安全回退到全量 run(false)。已存在于市场候选结果中的新股仅补 isCustom 标记，不重复计算。
+     */
+    async function addCustomMonitorIncremental() {
+        // 1. 校验可增量：已有结果 + 当前日期上下文与上次一致
+        if (!lastResults.length) {
+            console.log('无既有结果，增量不可行，回退全量重算');
+            StockAPI.clearResultCache();
+            return run(false);
+        }
+        let targetDate, asOfDate, tradeDayOffset;
+        try {
+            await TradingCalendar.ensureHolidaysLoaded();
+            targetDate = selectedDate
+                ? TradingCalendar.getNearestTradeDate(selectedDate)
+                : TradingCalendar.getTargetTradeDate();
+            asOfDate = computeAsOfDate();
+            tradeDayOffset = TradingCalendar.getTradeDayOffset(asOfDate, targetDate);
+        } catch (e) {
+            console.warn('增量计算日期推导失败，回退全量:', e.message);
+            StockAPI.clearResultCache();
+            return run(false);
+        }
+        if (targetDate !== lastTargetDate || asOfDate !== lastAsOfDate
+                || tradeDayOffset !== lastTradeDayOffset) {
+            console.log('日期上下文变化，增量不可行，回退全量重算');
+            StockAPI.clearResultCache();
+            return run(false);
+        }
+
+        // 2. 区分：已在 lastResults 中的（市场候选）仅补 isCustom；其余为真正新增需计算
+        const customCodeSet = new Set(getCustomMonitors().map(s => s.code));
+        const trulyNew = [];
+        getCustomMonitors().forEach(s => {
+            const existing = lastResults.find(r => r.code === s.code);
+            if (existing) {
+                existing.isCustom = true; // 已算过，仅标记为关注，不重算
+            } else {
+                trulyNew.push(s);
+            }
+        });
+        if (!trulyNew.length) {
+            renderActiveMarketView(targetDate);
+            return;
+        }
+
+        // 3. 立即插入占位行（关注异动tab先显示"计算中"），其余结果保持不动
+        const placeholders = buildPendingRows(trulyNew, targetDate);
+        lastResults = lastResults.concat(placeholders);
+        renderActiveMarketView(targetDate);
+
+        // 4. 仅计算真正新增的股票
+        isLoading = true;
+        const btnRefresh = document.getElementById('btnRefresh');
+        if (btnRefresh) btnRefresh.disabled = true;
+        try {
+            const newStockObjs = trulyNew.map(s => ({
+                code: s.code, name: s.name, market: s.market,
+                secid: s.market + '.' + s.code, price: 0, changePercent: 0,
+                gain5d: 0, source: '自定义'
+            }));
+            Renderer.showLoading('正在获取K线数据... (0/' + newStockObjs.length + ')', true);
+            const klineMap = await StockAPI.batchGetKline(
+                newStockObjs.map(s => s.secid), config.concurrency,
+                (c, t) => Renderer.updateProgress(c, t)
+            );
+            Renderer.showLoading('正在获取基准指数数据...', true);
+            const indexKlineMap = await StockAPI.getBenchmarkIndices(newStockObjs, 40);
+
+            // 与 run 一致：K线/指数K线截断到 as-of（含）
+            const truncateTo = (bars, dateStr) => {
+                if (!bars || !dateStr) return bars;
+                const out = bars.filter(b => b.date <= dateStr);
+                return out.length ? out : bars;
+            };
+            if (asOfDate) {
+                newStockObjs.forEach(s => {
+                    const k = klineMap.get(s.secid);
+                    if (k) klineMap.set(s.secid, truncateTo(k, asOfDate));
+                });
+                indexKlineMap.forEach((bars, secid) =>
+                    indexKlineMap.set(secid, truncateTo(bars, asOfDate)));
+            }
+
+            const computed = UnusualCalculator.analyzeStocks(
+                newStockObjs, klineMap, indexKlineMap, config.forwardDays, false, tradeDayOffset
+            );
+            const computedCodes = new Set(computed.map(r => r.code));
+            computed.forEach(r => {
+                if (customCodeSet.has(r.code)) r.isCustom = true;
+                const idx = lastResults.findIndex(x => x.code === r.code && x.__pending);
+                const plain = lastResults.findIndex(x => x.code === r.code);
+                if (idx >= 0) lastResults[idx] = r;       // 替换占位
+                else if (plain >= 0) lastResults[plain] = r;
+                else lastResults.push(r);
+            });
+            // 清理计算失败的占位行（K线缺失→analyzeStocks跳过），避免"计算中"卡死
+            const trulyNewCodes = new Set(trulyNew.map(s => s.code));
+            lastResults = lastResults.filter(r =>
+                !(r.__pending && r.isCustom && trulyNewCodes.has(r.code) && !computedCodes.has(r.code)));
+            // 覆盖写回结果缓存（沿用上次 meta，避免下次缓存命中丢新增股）
+            if (lastResultMeta) {
+                StockAPI.setResultCache(lastResults, lastResultMeta);
+            }
+            renderActiveMarketView(targetDate);
+            updateDataInfo(lastResults, targetDate);
+        } catch (e) {
+            console.error('增量计算异常:', e);
+            Renderer.showError('新增股票计算失败: ' + e.message);
+        } finally {
+            isLoading = false;
+            if (btnRefresh) btnRefresh.disabled = false;
         }
     }
 
@@ -280,6 +403,26 @@ const App = (function () {
     }
 
     /**
+     * 计算数据截止日(as-of)（TODO45.2/45.4：计算与展示均基于该日收盘价）
+     * - 选了历史日期 → 该日期（历史快照）
+     * - 未选 + 勾选"当日实时价计算" + 今日是交易日 → 今日
+     * - 未选 + 默认 → 最近已收盘交易日（今日未收盘则退到上一交易日）
+     * 与 run 内联逻辑保持一致，供 TODO49 增量计算复用。
+     * @returns {string} YYYY-MM-DD
+     */
+    function computeAsOfDate() {
+        if (selectedDate) {
+            return TradingCalendar.getNearestTradeDate(selectedDate);
+        }
+        if (config.realtimeCalc && TradingCalendar.isTradingDay(new Date())) {
+            return TradingCalendar.getLatestTradeDate();
+        }
+        return TradingCalendar.isMarketClosed()
+            ? TradingCalendar.getLatestTradeDate()
+            : (TradingCalendar.getPreviousTradeDate(new Date(), 1) || TradingCalendar.getLatestTradeDate());
+    }
+
+    /**
      * 生成自定义监控股票的占位行（TODO30.1）
      * 主流程：用监控列表构造带 __pending 标记的最小结构行，让 renderTable 立即渲染
      * "计算中"占位；K线获取+异动计算完成后由 renderActiveMarketView 全量覆盖
@@ -337,19 +480,8 @@ const App = (function () {
             const latestTradeDate = TradingCalendar.getLatestTradeDate();
 
             // TODO45.2/45.4：数据截止日(as-of)——计算与展示均基于该日收盘价，不用最新价
-            // - 选了历史日期 → 该日期（历史快照，只用其及之前收盘价，不用之后的最新价）
-            // - 未选 + 勾选"当日实时价计算" + 今日是交易日 → 今日（含盘中实时价）
-            // - 未选 + 默认 → 最近已收盘交易日（今日未收盘则退到上一交易日）
-            let asOfDate;
-            if (selectedDate) {
-                asOfDate = targetDate;
-            } else if (config.realtimeCalc && TradingCalendar.isTradingDay(new Date())) {
-                asOfDate = latestTradeDate;
-            } else {
-                asOfDate = TradingCalendar.isMarketClosed()
-                    ? latestTradeDate
-                    : (TradingCalendar.getPreviousTradeDate(new Date(), 1) || latestTradeDate);
-            }
+            // 复用 computeAsOfDate()（与增量计算路径一致）
+            const asOfDate = computeAsOfDate();
             // TODO45.5：偏移量基于"数据截止日→目标交易日"（K线已按 as-of 截断，故最新日=as-of），
             //   供计算器把展示第d列平移到目标交易日+d。
             const tradeDayOffset = TradingCalendar.getTradeDayOffset(asOfDate, targetDate);
@@ -376,6 +508,10 @@ const App = (function () {
                     if (klineDateOk && offsetOk && afterClose) {
                         console.log('使用缓存结果，共' + cacheWrap.data.length + '只（meta=' + JSON.stringify(meta) + '）');
                         lastResults = cacheWrap.data;
+                        lastResultMeta = meta;
+                        lastTargetDate = targetDate;
+                        lastAsOfDate = asOfDate;
+                        lastTradeDayOffset = tradeDayOffset;
                         renderActiveMarketView(targetDate);
                         updateDataInfo(cacheWrap.data, targetDate);
                         return;
@@ -474,13 +610,19 @@ const App = (function () {
             if (results.length > 0) {
                 const klineDate = asOfDate || results[0].date || latestTradeDate;
                 const capturedAfterClose = TradingCalendar.isMarketClosed();
-                StockAPI.setResultCache(results, {
+                const meta = {
                     klineLatestDate: klineDate,
                     tradeDayOffset: tradeDayOffset,
                     capturedAfterClose: capturedAfterClose
-                });
+                };
+                StockAPI.setResultCache(results, meta);
+                // 记录上下文供 TODO49 增量计算判断与缓存覆盖写回
+                lastResultMeta = meta;
             }
             lastResults = results;
+            lastTargetDate = targetDate;
+            lastAsOfDate = asOfDate;
+            lastTradeDayOffset = tradeDayOffset;
 
             // 第5步：按当前二级tab渲染（市场异动=全量除自定义 / 关注异动=仅自定义）
             renderActiveMarketView(targetDate);
